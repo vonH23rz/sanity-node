@@ -129,11 +129,13 @@ One quick answer:
 
 ## Documentation
 
-The full installation and explanation guide is available on the vonH23rz Wiki:
+The Sanity Node project explanation, dashboard overview, and current homelab deployment notes are available on the vonH23rz Wiki:
 
-[Install Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity-Node)
+[Sanity Node Wiki](https://wiki.homelabvonh23rz.me/en/Install_Sanity-Node)
 
-The wiki contains the more human explanation: what Sanity Node is, why it exists, what the dashboard blocks mean, and how it is used in my homelab.
+The wiki explains what Sanity Node is, why it exists, what the dashboard blocks mean, and how it is currently used in my homelab.
+
+A clean public installation guide will be added once Sanity Node becomes more configuration-driven and has been tested on a fresh Ubuntu system.
 
 ---
 
