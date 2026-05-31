@@ -1,0 +1,16 @@
+[Unit]
+Description=Sanity Node web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sanity-node
+Group=sanity-node
+WorkingDirectory=/opt/sanity-node/html
+ExecStart=/usr/bin/python3 -m http.server 8088 --directory /opt/sanity-node/html
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

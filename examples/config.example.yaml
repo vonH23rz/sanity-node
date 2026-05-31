@@ -1,0 +1,99 @@
+# Sanity Node example configuration
+#
+# This file shows the intended future configuration style.
+# The current early version may still contain hardcoded values in scripts/generate-dashboard.py.
+#
+# Copy this file to config.yaml and adjust it for your own homelab when config support is implemented.
+
+sanity_node:
+  title: "Sanity Node"
+  subtitle: "Observe. Announce. Stay sane."
+  output_file: "/opt/sanity-node/html/index.html"
+  refresh_interval_minutes: 5
+  web_port: 8088
+
+collector:
+  name: "Utility Node"
+  type: "linux"
+  address: "192.168.1.10"
+
+ssh:
+  user: "truenas_admin"
+  key_path: "/opt/sanity-node/ssh/id_ed25519"
+  timeout_seconds: 20
+
+hosts:
+  - name: "Main TrueNAS"
+    type: "truenas"
+    address: "192.168.1.20"
+    url: "http://192.168.1.20"
+    role: "primary"
+
+  - name: "Backup TrueNAS"
+    type: "truenas"
+    address: "192.168.1.30"
+    url: "http://192.168.1.30"
+    role: "backup"
+
+  - name: "Utility Node"
+    type: "linux"
+    address: "192.168.1.10"
+    url: "http://192.168.1.10"
+    role: "collector"
+
+services:
+  - id: "jellyfin"
+    name: "Jellyfin"
+    host: "Main TrueNAS"
+    category: "app"
+    check: "http"
+    url: "http://192.168.1.20:8096"
+
+  - id: "wikijs"
+    name: "Wiki.js"
+    host: "Main TrueNAS"
+    category: "app"
+    check: "http"
+    url: "http://192.168.1.20:3000"
+
+  - id: "dockge"
+    name: "Dockge"
+    host: "Utility Node"
+    category: "app"
+    check: "docker"
+    container: "dockge"
+    url: "http://192.168.1.10:5001"
+
+  - id: "cloudflared"
+    name: "Cloudflare Tunnel"
+    host: "Utility Node"
+    category: "helper"
+    check: "docker"
+    container: "cloudflared"
+
+  - id: "redis"
+    name: "Redis"
+    host: "Main TrueNAS"
+    category: "helper"
+    check: "truenas_app"
+    app: "redis"
+
+replications:
+  - name: "Main TrueNAS to Backup TrueNAS"
+    source_host: "Main TrueNAS"
+    target_host: "Backup TrueNAS"
+    target_prefix: "backup/main/zfs-replication"
+    datasets:
+      - "tank/media"
+      - "tank/configs"
+      - "vm"
+
+snapshot_tasks:
+  freshness_hours: 36
+  warning_hours: 48
+
+display:
+  show_pool_capacity: true
+  show_disk_temperatures: true
+  show_smart_status: true
+  show_service_links: true

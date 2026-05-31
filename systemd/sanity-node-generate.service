@@ -1,0 +1,8 @@
+[Unit]
+Description=Generate Sanity Node dashboard HTML
+
+[Service]
+Type=oneshot
+User=sanity-node
+Group=sanity-node
+ExecStart=/opt/sanity-node/scripts/generate-dashboard.py
