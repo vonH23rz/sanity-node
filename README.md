@@ -2,9 +2,9 @@
 
 > Observe. Announce. Stay sane.
 
-Sanity Node is a lightweight homelab dashboard that observes systems, services, pools, snapshots, and replications from one small Linux machine.
+Sanity Node is a lightweight homelab dashboard that observes systems, services, storage, snapshots, backups, replications, and update states from one small Linux / Utility collector node.
 
-It was originally built for my own homelab, where a small **Utility Node** watches multiple TrueNAS systems, Docker services, helper containers, ZFS pools, snapshot tasks, and replication jobs.
+It was originally built for my own homelab, where a Utility Node watches TrueNAS systems, Docker services, helper containers, ZFS pools, snapshot tasks, replication jobs, local storage, and backup status.
 
 The goal is simple:
 
@@ -22,46 +22,55 @@ Because in a homelab, everything works perfectly until it does not.
 
 ## Current project status
 
-Sanity Node is currently in an early public-preparation state.
+Sanity Node is currently moving from a personal, homelab-tested reference implementation toward a public, configuration-driven project.
 
-This repository contains the working homelab-tested version, but it is not yet a universal one-click installer.
+The current repository contains the working reference version that has been tested in my own environment. Some logic is still hardcoded for that setup.
 
-Current confidence level:
+The public direction is now defined:
 
-- Works in my own homelab
-- Useful as a reference implementation
-- Needs configuration cleanup before general use
-- Some paths, hosts, services, and IP addresses are still tailored to my environment
+- one Linux / Utility collector node
+- one or more configured hosts
+- optional TrueNAS SCALE monitoring
+- optional local, Docker, HTTP, backup, replication, and update checks
+- a self-documenting `config.yaml`
+- a future Docker Compose install flow on port `8099`
+- four global dashboard summary cards:
+  - Systems
+  - Storage
+  - Protection
+  - Services / Updates
 
 In other words:
 
-> It works.  
-> It is useful.  
-> It is not yet pretending to be enterprise software.  
-> Very healthy.
+> It works.
+> It is useful.
+> It is becoming more reusable.
+> No fake perfection.
 
 ---
 
 ## What Sanity Node monitors
 
-Sanity Node can display:
+Sanity Node can display and summarize:
 
 - Linux / TrueNAS system information
-- host uptime
-- CPU and memory information
-- load average
-- TrueNAS pools
-- ZFS pool health
+- host online/offline state
+- hostname, OS, kernel, uptime, CPU, memory, and load
+- TrueNAS pool health
 - pool capacity
-- disk temperatures
+- disk temperature summaries
 - SMART status
 - snapshot task freshness
 - replication state
+- backup status
 - running apps
-- helper containers
+- helper services
 - HTTP-checked services
+- local storage on the collector node
+- Docker container status
+- image update state, for example through Diun
 
-The dashboard separates services into two simple categories:
+The dashboard separates services into simple categories:
 
 ### Apps
 
@@ -75,7 +84,7 @@ User-facing services you actually open and use, such as:
 - Scrutiny
 - Dockge
 - Pi-hole
-- Nginx Proxy Manager
+- NGINX Proxy Manager
 
 ### Helpers
 
@@ -86,6 +95,7 @@ Backend or infrastructure services that keep things alive in the background, suc
 - Ollama
 - databases
 - Tailscale
+- Diun
 
 This makes the dashboard easier to read than a plain container count.
 
@@ -98,7 +108,7 @@ Instead of:
 Sanity Node can show:
 
 ```text
-10 Apps · 4 Helpers · 14 UP · 0 DOWN
+14 Services · 13 UP · 1 UPDATE · 0 DOWN
 ```
 
 Much better. Less guessing. More sanity.
@@ -119,8 +129,8 @@ It does not replace TrueNAS, Grafana, Uptime Kuma, Scrutiny, Netdata, or any oth
 
 It is my sanity check layer.
 
-One page.  
-One view.  
+One page.
+One view.
 One quick answer:
 
 **Is everything still OK?**
@@ -129,13 +139,15 @@ One quick answer:
 
 ## Documentation
 
-The Sanity Node project explanation, dashboard overview, and current homelab deployment notes are available on the vonH23rz Wiki:
+The project/concept page explains what Sanity Node is, why it exists, what it monitors, and how the dashboard concept evolved:
 
-[Sanity Node Wiki](https://wiki.homelabvonh23rz.me/en/Install_Sanity-Node)
+[Project Sanity Node](https://wiki.homelabvonh23rz.me/en/Project_Sanity_Node)
 
-The wiki explains what Sanity Node is, why it exists, what the dashboard blocks mean, and how it is currently used in my homelab.
+The installation tutorial explains the public install direction, requirements, collector-node concept, TrueNAS SSH requirement, Docker Compose layout, `config.yaml`, and the start-small approach:
 
-A clean public installation guide will be added once Sanity Node becomes more configuration-driven and has been tested on a fresh Ubuntu system.
+[Installing Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity_Node)
+
+The current GitHub repository is still being aligned with that public install direction. Until the Docker/Compose/config-driven version is implemented, treat the installation tutorial as the target architecture for the next public phase.
 
 ---
 
@@ -144,6 +156,7 @@ A clean public installation guide will be added once Sanity Node becomes more co
 ```text
 sanity-node/
 ├── README.md
+├── LICENSE
 ├── docs/
 │   └── assets/
 │       └── sanity-node-dashboard-readme.png
@@ -161,81 +174,112 @@ sanity-node/
 
 ---
 
-## Requirements
+## Current reference implementation
 
-Current working environment:
+The current reference implementation uses:
 
-- Ubuntu Linux for the Utility Node
 - Python 3
 - systemd
+- a static generated HTML dashboard
 - SSH access from the Utility Node to TrueNAS systems
-- TrueNAS SCALE systems reachable over LAN
-- Docker access where local container checks are used
-- HTTP access for services checked by URL
+- TrueNAS SCALE middleware calls through `midclt`
+- local Docker checks where available
+- HTTP checks for selected services
 
-The current version assumes a fairly similar setup to the original homelab deployment.
-
-The future version should move more of this into a proper configuration file.
-
----
-
-## Systemd services
-
-Example systemd unit files are included under:
+Some values are still hardcoded in:
 
 ```text
-systemd/
+scripts/generate-dashboard.py
 ```
 
-They provide:
+This includes personal hostnames, IP addresses, services, pool relationships, local paths, and backup targets.
 
-- a dashboard generator service
-- a timer that regenerates the dashboard every 5 minutes
-- a small Python HTTP server for serving the generated dashboard
+That is intentional for the current reference version. The next major development goal is to move those definitions into `config.yaml`.
 
-The intended public install path is:
+---
+
+## Configuration direction
+
+The future public configuration model is represented in:
 
 ```text
-/opt/sanity-node
+examples/config.example.yaml
+```
+
+That file is intentionally self-documenting. It uses:
+
+```text
+🟧 Required = review or change this for your environment
+🩵 Optional = enable only if you use this feature
+```
+
+The goal is that users should be able to describe their own homelab without editing the Python code.
+
+The future model separates:
+
+```text
+docker-compose.yml = how Sanity Node runs
+config.yaml        = what Sanity Node monitors
+.env               = optional local overrides
+ssh/               = optional SSH keys for remote checks
+html/              = generated dashboard output
+logs/              = runtime logs
 ```
 
 ---
 
-## Important note
+## Public install direction
 
-This project is currently being cleaned up for GitHub.
+The planned public install flow is:
 
-Some values may still be hardcoded, including:
+```text
+git clone
+copy config.example.yaml to config.yaml
+edit dashboard, collector, and host settings
+add SSH keys if TrueNAS monitoring is enabled
+start Sanity Node with Docker Compose
+open http://collector-ip:8099
+enable optional features later
+```
 
-- hostnames
-- IP addresses
-- service names
-- TrueNAS-specific replication paths
-- local dashboard paths
+Sanity Node should start small and grow with the environment.
 
-That is intentional for the first public version.
+A first useful setup can be as simple as:
 
-The goal is to publish the working version first, then slowly convert it into a cleaner, configuration-driven project.
+```text
+dashboard
+collector
+one host
+one or two basic modules
+```
 
-No fake perfection.  
-No magical installer lies.  
-Just honest homelab progress.
+Optional features can be enabled later:
+
+```text
+services
+local storage
+backup checks
+snapshot checks
+replication checks
+image update monitoring
+```
 
 ---
-
 ## Future plans
 
 Planned improvements:
 
 - configuration-driven hosts
 - configuration-driven services
-- configurable apps/helpers
-- configurable replication relationships
-- cleaner install script
+- configuration-driven local storage checks
+- configuration-driven backup checks
+- configuration-driven protection relationships
+- Docker Compose runtime
+- `.env.example`
+- Dockerfile
 - safer first-run checks
-- improved documentation
-- example configs for different homelab layouts
-- better separation between personal deployment and public template
+- public-preview layout with four global summary cards
+- cleaner separation between personal deployment and public template
 
 ---
 
@@ -244,6 +288,10 @@ Planned improvements:
 Sanity Node should stay simple.
 
 It should observe what matters, announce clearly, and avoid becoming a monitoring monster.
+
+Sanity Node is custom-built, open-source-minded, and hands-on by design.
+
+It grew from learning, testing, breaking things, fixing them again, and turning those lessons into a dashboard that announces whether the homelab is still behaving as expected.
 
 The purpose is not to collect every metric possible.
 

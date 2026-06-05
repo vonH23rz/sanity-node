@@ -1,99 +1,307 @@
+# =============================================================================
 # Sanity Node example configuration
+# =============================================================================
 #
-# This file shows the intended future configuration style.
-# The current early version may still contain hardcoded values in scripts/generate-dashboard.py.
+# 🟧 Required = review or change this for your environment
+# 🩵 Optional = enable only if you use this feature
 #
-# Copy this file to config.yaml and adjust it for your own homelab when config support is implemented.
+# Sanity Node reads this file to understand what it should monitor.
+# You should not need to edit the Python code.
+#
+# Start small:
+# 1. configure the dashboard
+# 2. configure the collector
+# 3. add one host
+# 4. confirm the dashboard works
+# 5. enable optional features later
+#
+# =============================================================================
 
-sanity_node:
-  title: "Sanity Node"
-  subtitle: "Observe. Announce. Stay sane."
-  output_file: "/opt/sanity-node/html/index.html"
-  refresh_interval_minutes: 5
-  web_port: 8088
+
+# =============================================================================
+# Dashboard identity
+# =============================================================================
+# 🟧 Required: basic dashboard settings
+
+dashboard:
+  title: Sanity Node
+  subtitle: Observe. Announce. Stay sane.
+  refresh_minutes: 5        # number of minutes between dashboard refreshes
+  port: 8099                # default Sanity Node web port
+
+
+# =============================================================================
+# Collector node
+# =============================================================================
+# 🟧 Required: the Linux / Utility collector node running Sanity Node
+#
+# This can be a dedicated Utility Node or an existing always-on Linux machine.
 
 collector:
-  name: "Utility Node"
-  type: "linux"
-  address: "192.168.1.10"
+  id: collector             # internal name, no spaces
+  display_name: Utility Node
+  hostname: utility-node
+  type: linux               # linux
 
-ssh:
-  user: "truenas_admin"
-  key_path: "/opt/sanity-node/ssh/id_ed25519"
-  timeout_seconds: 20
+
+# =============================================================================
+# Hosts
+# =============================================================================
+# 🟧 Required: add at least one host that Sanity Node should monitor.
+#
+# A host can be:
+# - a TrueNAS SCALE system
+# - a Linux host
+# - the collector node itself
+# - another server, lab machine, archive node, or Docker host
 
 hosts:
-  - name: "Main TrueNAS"
-    type: "truenas"
-    address: "192.168.1.20"
-    url: "http://192.168.1.20"
-    role: "primary"
+  # ---------------------------------------------------------------------------
+  # TrueNAS Server 1
+  # ---------------------------------------------------------------------------
+  # 🟧 Required if you want to monitor a TrueNAS system
 
-  - name: "Backup TrueNAS"
-    type: "truenas"
-    address: "192.168.1.30"
-    url: "http://192.168.1.30"
-    role: "backup"
+  - id: host1
+    enabled: true
+    display_name: TrueNAS Server 1
+    hostname: truenas-server-1   # real hostname or expected hostname
+    address: 192.168.1.20       # IP address or DNS name used to connect
+    type: truenas                # truenas/linux
+    web_url: http://192.168.1.20 # optional browser link to the web UI
 
-  - name: "Utility Node"
-    type: "linux"
-    address: "192.168.1.10"
-    url: "http://192.168.1.10"
-    role: "collector"
+    ssh:
+      enabled: true              # required for TrueNAS monitoring
+      user: truenas_admin
+      key_file: /app/ssh/id_ed25519
+
+    modules:
+      system_info: true          # true/false
+      pools: true                # true/false
+      snapshots: true            # true/false
+      replications: false        # true/false
+      apps: true                 # true/false
+      services: true             # true/false
+
+
+  # ---------------------------------------------------------------------------
+  # TrueNAS Server 2
+  # ---------------------------------------------------------------------------
+  # 🩵 Optional: enable this if you have a second TrueNAS system.
+  #
+  # This does not have to be a backup server. It can also be a test server,
+  # archive server, lab server, or any other TrueNAS SCALE system.
+  #
+  # Because enabled is false, this host is ignored until you enable it.
+
+  - id: host2
+    enabled: false
+    display_name: TrueNAS Server 2
+    hostname: truenas-server-2   # real hostname or expected hostname
+    address: 192.168.1.30       # IP address or DNS name used to connect
+    type: truenas
+    web_url: http://192.168.1.30 # optional browser link to the web UI
+
+    ssh:
+      enabled: true              # required for TrueNAS monitoring
+      user: truenas_admin
+      key_file: /app/ssh/id_ed25519
+
+    modules:
+      system_info: true          # true/false
+      pools: true                # true/false
+      snapshots: true            # true/false
+      replications: false        # true/false
+      apps: false                # true/false
+      services: false            # true/false
+
+
+  # ---------------------------------------------------------------------------
+  # Collector as monitored host
+  # ---------------------------------------------------------------------------
+  # 🩵 Optional but recommended: monitor the collector itself.
+
+  - id: collector
+    enabled: true
+    display_name: Utility Node
+    hostname: utility-node
+    address: 192.168.1.10       # IP address or DNS name used to connect
+    type: linux
+
+    modules:
+      system_info: true          # true/false
+      local_storage: true        # true/false
+      docker: true               # true/false
+      backup_status: false       # true/false
+      services: true             # true/false
+
+
+# =============================================================================
+# Services
+# =============================================================================
+# 🩵 Optional: define applications, helpers, and web services.
+#
+# Example services are disabled by default.
+# HTTP checks are often the easiest and safest way to monitor web services.
+#
+# To use one:
+# 1. copy or edit the block
+# 2. change host/name/url/container/app_id
+# 3. set enabled: true
 
 services:
-  - id: "jellyfin"
-    name: "Jellyfin"
-    host: "Main TrueNAS"
-    category: "app"
-    check: "http"
-    url: "http://192.168.1.20:8096"
+  # ---------------------------------------------------------------------------
+  # HTTP service example
+  # ---------------------------------------------------------------------------
+  # Good for web interfaces, Dockge stacks, Docker Compose apps,
+  # TrueNAS-hosted apps, or reverse-proxied services.
 
-  - id: "wikijs"
-    name: "Wiki.js"
-    host: "Main TrueNAS"
-    category: "app"
-    check: "http"
-    url: "http://192.168.1.20:3000"
+  - enabled: false
+    host: host1
+    name: Jellyfin
+    type: app                  # app/helper
+    check: http                # http/truenas_app/docker
+    url: http://192.168.1.20:8069
 
-  - id: "dockge"
-    name: "Dockge"
-    host: "Utility Node"
-    category: "app"
-    check: "docker"
-    container: "dockge"
-    url: "http://192.168.1.10:5001"
 
-  - id: "cloudflared"
-    name: "Cloudflare Tunnel"
-    host: "Utility Node"
-    category: "helper"
-    check: "docker"
-    container: "cloudflared"
+  - enabled: false
+    host: host1
+    name: Wiki.js
+    type: app
+    check: http
+    url: http://192.168.1.20:9190
 
-  - id: "redis"
-    name: "Redis"
-    host: "Main TrueNAS"
-    category: "helper"
-    check: "truenas_app"
-    app: "redis"
 
-replications:
-  - name: "Main TrueNAS to Backup TrueNAS"
-    source_host: "Main TrueNAS"
-    target_host: "Backup TrueNAS"
-    target_prefix: "backup/main/zfs-replication"
+  # ---------------------------------------------------------------------------
+  # TrueNAS App example
+  # ---------------------------------------------------------------------------
+  # Uses TrueNAS SCALE app status through midclt.
+
+  - enabled: false
+    host: host1
+    name: OpenWebUI
+    type: app
+    check: truenas_app
+    app_id: open-webui
+    url: http://192.168.1.20:31028
+
+
+  # ---------------------------------------------------------------------------
+  # Docker container example
+  # ---------------------------------------------------------------------------
+  # Requires Docker access on the host where the container runs.
+  # If you do not want to expose Docker access, use HTTP checks where possible.
+
+  - enabled: false
+    host: collector
+    name: Pi-hole
+    type: app
+    check: docker
+    container: pihole
+    url: http://192.168.1.10:8081/admin/
+
+
+  - enabled: false
+    host: collector
+    name: Cloudflare Tunnel
+    type: helper
+    check: docker
+    container: tunnel
+
+
+# =============================================================================
+# Local storage checks
+# =============================================================================
+# 🩵 Optional: monitor selected local filesystems on Linux hosts.
+# Enable only mountpoints that actually exist on the selected host.
+
+local_storage:
+  - enabled: false
+    host: collector
+    mount: /
+    label: System Disk
+
+  - enabled: false
+    host: collector
+    mount: /mnt/storage
+    label: Storage Disk
+
+
+# =============================================================================
+# Backup status checks
+# =============================================================================
+# 🩵 Optional: monitor a local backup script, timer, marker file, and log folder.
+# This check is useful if your collector node runs its own backup script.
+# Keep enabled: false unless those files and the timer exist on your system.
+
+backup_checks:
+  - enabled: false
+    host: collector
+    name: Utility Node Backup
+    marker_file: /var/backups/utility-node/last-successful-backup.txt
+    log_dir: /var/backups/utility-node/logs
+    systemd_timer: utility-node-backup.timer
+    target: backup/utility/utility-node
+    max_age_hours: 36
+
+
+# =============================================================================
+# Protection relationships
+# =============================================================================
+# 🩵 Optional: define backups or replications between systems.
+#
+# Sanity Node does not assume that Host 1 backs up to Host 2.
+# Protection relationships only exist when configured here.
+#
+# Keep enabled: false unless this replication relationship actually exists.
+
+protection:
+  - enabled: false
+    id: host1-to-host2
+    name: TrueNAS Server 1 → TrueNAS Server 2
+    type: replication
+    source_host: host1
+    target_host: host2
+    target_prefix: backup/host1/zfs-replication
+
     datasets:
-      - "tank/media"
-      - "tank/configs"
-      - "vm"
+      - tank/stacks
+      - tank/configs
+      - tank/media
+      - vm
 
-snapshot_tasks:
-  freshness_hours: 36
-  warning_hours: 48
 
-display:
-  show_pool_capacity: true
-  show_disk_temperatures: true
-  show_smart_status: true
-  show_service_links: true
+# =============================================================================
+# Image update monitoring
+# =============================================================================
+# 🩵 Optional: show UPDATE when a running service has a container image update.
+#
+# UPDATE does not mean the service is broken.
+# It means the service is running, but maintenance is available.
+#
+# Requires a supported image update source, for example Diun.
+
+image_updates:
+  enabled: false
+  provider: diun
+
+  hosts:
+    - collector
+    - host1
+
+
+# =============================================================================
+# Summary cards
+# =============================================================================
+# 🩵 Optional: public dashboard top cards.
+#
+# Recommended default:
+# - systems
+# - storage
+# - protection
+# - services
+
+summary_cards:
+  - systems
+  - storage
+  - protection
+  - services

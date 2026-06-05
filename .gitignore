@@ -32,3 +32,6 @@ preview.html
 Thumbs.db
 .vscode/
 .idea/
+
+# Runtime SSH keys
+ssh/
