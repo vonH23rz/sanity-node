@@ -11,6 +11,7 @@ services:
       - TZ=${TZ:-Etc/UTC}
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - SANITY_NODE_CONFIG=${SANITY_NODE_CONFIG:-/app/config/config.yaml}
       - SANITY_NODE_OUTPUT=${SANITY_NODE_OUTPUT:-/app/html/index.html}
       - SANITY_NODE_SSH_USER=${SANITY_NODE_SSH_USER:-truenas_admin}
       - SANITY_NODE_SSH_KEY=${SANITY_NODE_SSH_KEY:-/app/ssh/id_ed25519}

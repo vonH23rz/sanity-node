@@ -2,6 +2,7 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV SANITY_NODE_CONFIG=/app/config/config.yaml
 ENV SANITY_NODE_OUTPUT=/app/html/index.html
 ENV SANITY_NODE_SSH_USER=truenas_admin
 ENV SANITY_NODE_SSH_KEY=/app/ssh/id_ed25519
@@ -16,6 +17,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY scripts/ /app/scripts/
 COPY web/ /app/web/
