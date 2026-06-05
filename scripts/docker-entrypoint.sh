@@ -7,10 +7,35 @@ WEB_DIR="/app/web"
 PORT="${SANITY_NODE_PORT:-8099}"
 REFRESH_SECONDS="${SANITY_NODE_REFRESH_SECONDS:-300}"
 
-mkdir -p "$HTML_DIR" "$LOG_DIR"
+setup_files() {
+  mkdir -p "$HTML_DIR" "$LOG_DIR"
 
-if [ -d "$WEB_DIR" ]; then
-  cp -a "$WEB_DIR"/. "$HTML_DIR"/
+  if [ -d "$WEB_DIR" ]; then
+    cp -a "$WEB_DIR"/. "$HTML_DIR"/
+  fi
+}
+
+if [ "${1:-}" != "run" ]; then
+  setup_files
+
+  if [ "$(id -u)" = "0" ]; then
+    RUN_UID="${PUID:-1000}"
+    RUN_GID="${PGID:-1000}"
+
+    if ! getent group "$RUN_GID" >/dev/null 2>&1; then
+      groupadd -g "$RUN_GID" sanitynode
+    fi
+
+    if ! getent passwd "$RUN_UID" >/dev/null 2>&1; then
+      useradd -u "$RUN_UID" -g "$RUN_GID" -d /tmp -s /usr/sbin/nologin sanitynode
+    fi
+
+    chown -R "$RUN_UID:$RUN_GID" "$HTML_DIR" "$LOG_DIR"
+
+    exec gosu "$RUN_UID:$RUN_GID" "$0" run
+  fi
+
+  exec "$0" run
 fi
 
 generate_once() {

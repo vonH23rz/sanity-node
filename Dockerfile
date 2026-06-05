@@ -11,6 +11,7 @@ ENV SANITY_NODE_PORT=8099
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        curl \
+       gosu \
        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
