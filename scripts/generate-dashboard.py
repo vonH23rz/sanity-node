@@ -205,6 +205,90 @@ def collect_local_docker_services(services):
     return statuses, errors
 
 
+def normalize_config_http_services(services):
+    normalized = []
+
+    for index, service in enumerate(services, start=1):
+        if not isinstance(service, dict):
+            continue
+
+        if service.get("check") != "http":
+            continue
+
+        name = service.get("name") or service.get("id") or f"Service {index}"
+        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name).lower()).strip("-")
+        service_id = service.get("id") or f"config-http-{index}-{safe_name or 'service'}"
+
+        service_type = service.get("type", "app")
+        if service_type not in ("app", "helper"):
+            service_type = "app"
+
+        normalized.append({
+            "id": str(service_id),
+            "display": str(name),
+            "type": service_type,
+            "url": service.get("url"),
+            "host": service.get("host"),
+            "check": "http",
+        })
+
+    return normalized
+
+
+def collect_http_services(services):
+    statuses = {}
+
+    for service in services:
+        service_id = service["id"]
+        url = service.get("url")
+
+        if not url:
+            statuses[service_id] = {"label": "UNKNOWN", "css": "info", "raw": "missing url"}
+            continue
+
+        try:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-k",
+                    "-L",
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "--connect-timeout",
+                    "5",
+                    "--max-time",
+                    "10",
+                    "-w",
+                    "%{http_code}",
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            http_code = (result.stdout + result.stderr).strip()
+            ok = (
+                result.returncode == 0
+                and http_code.isdigit()
+                and int(http_code) != 0
+                and int(http_code) < 500
+            )
+
+            if ok:
+                statuses[service_id] = {"label": "UP", "css": "ok", "raw": f"HTTP {http_code}"}
+            else:
+                raw = f"HTTP {http_code}" if http_code else "HTTP check failed"
+                statuses[service_id] = {"label": "DOWN", "css": "bad", "raw": raw}
+
+        except Exception as e:
+            statuses[service_id] = {"label": "DOWN", "css": "bad", "raw": str(e)}
+
+    return statuses
+
+
+
 def collect_truenas_app_services(ip, services):
     statuses = {}
 
@@ -1787,6 +1871,22 @@ for service in T620_SERVICES:
 beckhoff_service_summary = build_service_summary(BECKHOFF_SERVICES, beckhoff_service_statuses)
 t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuses)
 
+config_http_services = normalize_config_http_services(CONFIG_ENABLED_SERVICES)
+config_http_statuses = collect_http_services(config_http_services)
+config_http_service_summary = build_service_summary(config_http_services, config_http_statuses) if config_http_services else None
+
+for service in config_http_services:
+    status = config_http_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
+    label = status["label"]
+
+    if status.get("css") == "bad":
+        nok_issues.append(f"Configured service {service['display']} is {label}")
+    elif label != "UP":
+        info_issues.append(f"Configured service {service['display']} is {label}")
+
+if config_http_services:
+    print(f"Configured HTTP services checked: {len(config_http_services)}")
+
 if nok_issues:
     overall_label = "NOK"
     overall_css = "bad"
@@ -1828,6 +1928,18 @@ if collection_errors:
     {error_rows}
   </table>
 </section>
+"""
+
+configured_services_card_html = ""
+if config_http_service_summary:
+    configured_services_card_html = f"""
+  <div class="summary-card {h(config_http_service_summary["css"])}">
+    <div class="title">Configured Services</div>
+    <div class="value">{h(config_http_service_summary["value"])}</div>
+    <div class="summary-details service-details {h(config_http_service_summary["details_class"])}">
+      {config_http_service_summary["details"]}
+    </div>
+  </div>
 """
 
 page = f"""<!DOCTYPE html>
@@ -2587,6 +2699,7 @@ pre, .mono {{
       {replication_detail_html}
     </div>
   </div>
+{configured_services_card_html}
   <div class="summary-card {h(t620_service_summary["css"])}">
     <div class="title">T620 Services</div>
     <div class="value">{h(t620_service_summary["value"])}</div>
