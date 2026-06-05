@@ -59,6 +59,40 @@ def cfg_int(path, default):
         return default
 
 
+def cfg_list(path, default=None):
+    value = cfg_get(path, default if default is not None else [])
+
+    if isinstance(value, list):
+        return value
+
+    print(f"Config value {'.'.join(path)} is not a list; ignoring it")
+    return []
+
+
+def enabled_items(items):
+    return [
+        item for item in items
+        if isinstance(item, dict) and item.get("enabled", True)
+    ]
+
+
+CONFIG_HOSTS = cfg_list(("hosts",))
+CONFIG_ENABLED_HOSTS = enabled_items(CONFIG_HOSTS)
+
+CONFIG_SERVICES = cfg_list(("services",))
+CONFIG_ENABLED_SERVICES = enabled_items(CONFIG_SERVICES)
+
+CONFIG_PROTECTION = cfg_list(("protection",))
+CONFIG_ENABLED_PROTECTION = enabled_items(CONFIG_PROTECTION)
+
+print(
+    "Loaded config inventory: "
+    f"{len(CONFIG_ENABLED_HOSTS)}/{len(CONFIG_HOSTS)} hosts enabled, "
+    f"{len(CONFIG_ENABLED_SERVICES)}/{len(CONFIG_SERVICES)} services enabled, "
+    f"{len(CONFIG_ENABLED_PROTECTION)}/{len(CONFIG_PROTECTION)} protection relationships enabled"
+)
+
+
 DASHBOARD_TITLE = str(cfg_get(("dashboard", "title"), "Sanity Node"))
 DASHBOARD_SUBTITLE = str(cfg_get(("dashboard", "subtitle"), "Observe. Announce. Stay sane."))
 REFRESH_MINUTES = cfg_int(("dashboard", "refresh_minutes"), 5)
