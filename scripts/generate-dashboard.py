@@ -4,14 +4,15 @@ import subprocess
 import json
 import html
 import re
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
 
-OUT = Path("/opt/homelab-dashboard/html/index.html")
+OUT = Path(os.environ.get("SANITY_NODE_OUTPUT", "/opt/homelab-dashboard/html/index.html"))
 
-SSH_USER = "truenas_admin"
-SSH_KEY = "/home/controls/.ssh/id_ed25519"
+SSH_USER = os.environ.get("SANITY_NODE_SSH_USER", "truenas_admin")
+SSH_KEY = os.environ.get("SANITY_NODE_SSH_KEY", "/home/controls/.ssh/id_ed25519")
 
 T620_IP = "192.168.30.10"
 T330_IP = "192.168.30.33"
