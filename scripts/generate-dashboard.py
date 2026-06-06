@@ -238,6 +238,7 @@ def normalize_config_service(service, index):
         "url": service.get("url"),
         "host": service.get("host"),
         "check": service.get("check"),
+        "container": service.get("container"),
     }
 
 
@@ -257,6 +258,57 @@ def normalize_config_http_services(services):
         service for service in normalize_config_services_for_summary(services)
         if service.get("check") == "http"
     ]
+
+
+def normalize_config_collector_docker_services(services):
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+
+    return [
+        service for service in normalize_config_services_for_summary(services)
+        if service.get("check") == "docker"
+        and str(service.get("host") or "") in (collector_id, "collector")
+    ]
+
+
+def collect_config_docker_services(services):
+    statuses = {}
+    errors = []
+
+    for service in services:
+        service_id = service["id"]
+        container_name = service.get("container") or service_id
+
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", str(container_name)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as e:
+            statuses[service_id] = {"label": "UNKNOWN", "css": "info", "raw": str(e)}
+            errors.append(f"{service_id}: {e}")
+            continue
+
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).strip()
+            statuses[service_id] = {"label": "MISSING", "css": "bad", "raw": output}
+            errors.append(f"{service_id}: {output}")
+            continue
+
+        try:
+            payload = json.loads(result.stdout)
+            state = payload[0].get("State", {})
+            raw_state = "RUNNING" if state.get("Running") else state.get("Status")
+            label, css = service_label_from_state(raw_state, exists=True)
+        except Exception as e:
+            raw_state = str(e)
+            label, css = "UNKNOWN", "info"
+            errors.append(f"{service_id}: Docker inspect parse error: {e}")
+
+        statuses[service_id] = {"label": label, "css": css, "raw": raw_state}
+
+    return statuses, errors
 
 
 def collect_http_services(services):
@@ -313,11 +365,12 @@ def collect_http_services(services):
 
 
 
-def build_config_summary_statuses(services, http_statuses):
-    # Preview-only: HTTP checks are live today; Docker and TrueNAS app checks are
-    # documented future/config-driven paths. Show them as intentionally not
-    # checked instead of letting summary cards fall back to UNKNOWN.
+def build_config_summary_statuses(services, http_statuses, docker_statuses=None):
+    # Preview-only: HTTP checks are live today. Collector-local Docker checks are
+    # active when configured. Other future/config-driven paths remain explicitly
+    # marked as not checked instead of falling back to UNKNOWN.
     statuses = dict(http_statuses)
+    statuses.update(docker_statuses or {})
 
     for service in services:
         service_id = service["id"]
@@ -2197,8 +2250,19 @@ t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuse
 config_http_services = normalize_config_http_services(CONFIG_ENABLED_SERVICES)
 config_http_statuses = collect_http_services(config_http_services)
 
-for service in config_http_services:
-    status = config_http_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
+config_docker_services = normalize_config_collector_docker_services(CONFIG_ENABLED_SERVICES)
+config_docker_statuses, config_docker_errors = collect_config_docker_services(config_docker_services)
+
+for error in config_docker_errors:
+    collection_errors.append(("Configured Docker service query", error))
+
+config_checked_services = config_http_services + config_docker_services
+config_checked_statuses = {}
+config_checked_statuses.update(config_http_statuses)
+config_checked_statuses.update(config_docker_statuses)
+
+for service in config_checked_services:
+    status = config_checked_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
     label = status["label"]
 
     if status.get("css") == "bad":
@@ -2208,6 +2272,9 @@ for service in config_http_services:
 
 if config_http_services:
     print(f"Configured HTTP services checked: {len(config_http_services)}")
+
+if config_docker_services:
+    print(f"Configured collector Docker services checked: {len(config_docker_services)}")
 
 if nok_issues:
     overall_label = "NOK"
@@ -2253,7 +2320,11 @@ if collection_errors:
 """
 
 public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
-public_summary_statuses = build_config_summary_statuses(public_summary_services, config_http_statuses)
+public_summary_statuses = build_config_summary_statuses(
+    public_summary_services,
+    config_http_statuses,
+    config_docker_statuses,
+)
 public_summary_preview_html = build_public_host_summary_preview(
     CONFIG_HOSTS,
     public_summary_services,

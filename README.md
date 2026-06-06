@@ -221,7 +221,8 @@ Current Phase 2 public-preview behavior:
 - configured hosts can appear as host-based summary cards
 - host Web UI links can show preview reachability badges
 - configured HTTP services can report live `UP` / `DOWN`
-- future check engines such as `docker` and `truenas_app` are shown as `NOT CHECKED` until their config-driven collectors are implemented
+- configured Docker services on the collector node can report live container status
+- Docker checks for other hosts and future check engines such as `truenas_app` are shown as `NOT CHECKED` until their config-driven collectors are implemented
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 The future model separates:
