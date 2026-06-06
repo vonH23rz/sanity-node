@@ -1100,6 +1100,139 @@ def build_config_backup_preview(checks, statuses):
 
 
 
+def normalize_config_protection_relationships(relationships):
+    normalized = []
+
+    for index, relationship in enumerate(relationships, start=1):
+        if not isinstance(relationship, dict):
+            continue
+
+        name = relationship.get("name") or relationship.get("id") or f"Protection Relationship {index}"
+        relationship_id = relationship.get("id") or f"config-protection-{index}-{config_service_safe_name(name)}"
+        datasets = relationship.get("datasets") or []
+
+        if not isinstance(datasets, list):
+            datasets = []
+
+        normalized.append({
+            "id": str(relationship_id),
+            "name": str(name),
+            "type": str(relationship.get("type") or "replication"),
+            "source_host": relationship.get("source_host"),
+            "target_host": relationship.get("target_host"),
+            "target_prefix": relationship.get("target_prefix"),
+            "datasets": [str(dataset) for dataset in datasets],
+        })
+
+    return normalized
+
+
+def collect_config_protection_relationships(relationships):
+    statuses = {}
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        relationship_type = str(relationship.get("type") or "").lower()
+        source_host = relationship.get("source_host")
+        target_host = relationship.get("target_host")
+        target_prefix = relationship.get("target_prefix")
+        datasets = relationship.get("datasets") or []
+
+        if not source_host or not target_host:
+            statuses[relationship_id] = {
+                "label": "INCOMPLETE",
+                "css": "warning",
+                "raw": "missing source_host or target_host",
+            }
+            continue
+
+        if relationship_type != "replication":
+            statuses[relationship_id] = {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": f"{relationship_type or 'unknown'} protection relationships are preview-only for now",
+            }
+            continue
+
+        if not target_prefix:
+            statuses[relationship_id] = {
+                "label": "CONFIGURED",
+                "css": "info",
+                "raw": "replication relationship configured without target_prefix",
+            }
+            continue
+
+        dataset_count = len(datasets)
+
+        if dataset_count:
+            dataset_text = f"{dataset_count} datasets"
+        else:
+            dataset_text = "no datasets listed"
+
+        statuses[relationship_id] = {
+            "label": "CONFIGURED",
+            "css": "info",
+            "raw": f"replication preview · {dataset_text} · target prefix: {target_prefix}",
+        }
+
+    return statuses
+
+
+def build_config_protection_preview(relationships, statuses):
+    if not relationships:
+        return ""
+
+    rows = ""
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        status = statuses.get(relationship_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+        raw = status.get("raw", "-")
+        datasets = relationship.get("datasets") or []
+        dataset_text = ", ".join(datasets) if datasets else "-"
+
+        source_host = relationship.get("source_host") or "-"
+        target_host = relationship.get("target_host") or "-"
+
+        rows += f"""
+      <tr class="{h(css)}">
+        <td>{badge(label, css)}</td>
+        <td>{h(relationship.get("name", "-"))}</td>
+        <td>{h(relationship.get("type", "-"))}</td>
+        <td><span class="mono">{h(source_host)}</span> → <span class="mono">{h(target_host)}</span></td>
+        <td><span class="mono">{h(dataset_text)}</span></td>
+        <td>{h(raw)}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Protection Relationships</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(len(relationships))} relationships</div>
+    </div>
+    <p class="muted-small">Protection relationships are config-driven preview data. They document backup or replication intent without changing the existing reference replication checks yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Path</th>
+        <th>Datasets</th>
+        <th>Result</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+"""
+
+
+
 def configured_host_key(host):
     return str(host.get("id") or host.get("display_name") or host.get("hostname") or host.get("address") or "")
 
@@ -2593,6 +2726,13 @@ config_backup_preview_html = build_config_backup_preview(
     config_backup_statuses,
 )
 
+config_protection_relationships = normalize_config_protection_relationships(CONFIG_ENABLED_PROTECTION)
+config_protection_statuses = collect_config_protection_relationships(config_protection_relationships)
+config_protection_preview_html = build_config_protection_preview(
+    config_protection_relationships,
+    config_protection_statuses,
+)
+
 
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
@@ -3696,6 +3836,8 @@ pre, .mono {{
     {systems_layout_html}
   </div>
   {configured_hosts_preview_html}
+
+  {config_protection_preview_html}
 
   {config_local_storage_preview_html}
 

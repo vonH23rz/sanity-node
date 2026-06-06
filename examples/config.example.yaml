@@ -299,6 +299,13 @@ backup_checks:
 # Sanity Node does not assume that Host 1 backs up to Host 2.
 # Protection relationships only exist when configured here.
 #
+# Current public-preview behavior:
+# - enabled relationships are shown in the Config Preview section
+# - complete replication relationships show CONFIGURED
+# - missing source/target host information shows INCOMPLETE
+# - this preview documents protection intent only
+# - it does not replace the original reference replication checks yet
+#
 # Keep enabled: false unless this replication relationship actually exists.
 
 protection:
