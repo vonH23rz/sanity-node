@@ -351,8 +351,11 @@ image_updates:
 # Current public-preview behavior:
 # - controls the order and selection of the four-card preview row
 # - supported cards: systems, storage, protection, services
+# - card order follows the order below
+# - duplicate card names are removed; the first occurrence wins
 # - unknown card names are ignored
 # - if no valid cards are configured, the default four cards are used
+# - the preview header shows the active cards that were rendered
 #
 # Recommended default:
 # - systems

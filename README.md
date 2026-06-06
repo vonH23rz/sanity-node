@@ -227,9 +227,32 @@ Current Phase 2 public-preview behavior:
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
 - configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
+- `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
+
+### `summary_cards`
+
+The public four-card preview is controlled by the optional `summary_cards` list in `config.yaml`.
+
+Supported card names are:
+
+```yaml
+summary_cards:
+  - systems
+  - storage
+  - protection
+  - services
+```
+
+The order in the list is the order shown on the dashboard. Unknown card names are ignored. Duplicate card names are removed while preserving the first occurrence. If the list is empty, missing, or contains no valid card names, Sanity Node falls back to the default four cards:
+
+```text
+Systems · Storage · Protection · Services
+```
+
+The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
 
 The future model separates:
 
