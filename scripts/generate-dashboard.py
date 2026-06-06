@@ -239,6 +239,7 @@ def normalize_config_service(service, index):
         "host": service.get("host"),
         "check": service.get("check"),
         "container": service.get("container"),
+        "app_id": service.get("app_id"),
     }
 
 
@@ -311,6 +312,67 @@ def collect_config_docker_services(services):
     return statuses, errors
 
 
+def normalize_config_truenas_app_services(hosts, services):
+    enabled_truenas_host_ids = {
+        str(host.get("id") or "")
+        for host in enabled_items(hosts)
+        if isinstance(host, dict)
+        and str(host.get("type") or "").lower() == "truenas"
+        and host.get("id")
+    }
+
+    return [
+        service for service in normalize_config_services_for_summary(services)
+        if service.get("check") == "truenas_app"
+        and str(service.get("host") or "") in enabled_truenas_host_ids
+    ]
+
+
+def collect_config_truenas_app_services(hosts, services):
+    statuses = {}
+    errors = []
+
+    enabled_truenas_hosts = {
+        str(host.get("id") or ""): host
+        for host in enabled_items(hosts)
+        if isinstance(host, dict)
+        and str(host.get("type") or "").lower() == "truenas"
+        and host.get("id")
+    }
+
+    services_by_host = {}
+
+    for service in services:
+        host_id = str(service.get("host") or "")
+
+        if host_id not in enabled_truenas_hosts:
+            continue
+
+        services_by_host.setdefault(host_id, []).append(service)
+
+    for host_id, host_services in services_by_host.items():
+        host = enabled_truenas_hosts[host_id]
+        address = host.get("address")
+
+        if not address:
+            for service in host_services:
+                statuses[service["id"]] = {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "missing host address",
+                }
+            errors.append(f"{host_id}: missing host address")
+            continue
+
+        host_statuses, error = collect_truenas_app_services(str(address), host_services)
+        statuses.update(host_statuses)
+
+        if error:
+            errors.append(f"{host_id}: {error}")
+
+    return statuses, errors
+
+
 def collect_http_services(services):
     statuses = {}
 
@@ -365,12 +427,13 @@ def collect_http_services(services):
 
 
 
-def build_config_summary_statuses(services, http_statuses, docker_statuses=None):
-    # Preview-only: HTTP checks are live today. Collector-local Docker checks are
-    # active when configured. Other future/config-driven paths remain explicitly
-    # marked as not checked instead of falling back to UNKNOWN.
+def build_config_summary_statuses(services, http_statuses, docker_statuses=None, truenas_app_statuses=None):
+    # Preview-only: HTTP checks are live today. Collector-local Docker checks and
+    # configured TrueNAS app checks are active when configured. Other future paths
+    # remain explicitly marked as not checked instead of falling back to UNKNOWN.
     statuses = dict(http_statuses)
     statuses.update(docker_statuses or {})
+    statuses.update(truenas_app_statuses or {})
 
     for service in services:
         service_id = service["id"]
@@ -470,7 +533,8 @@ def collect_truenas_app_services(ip, services):
 
     for service in app_services:
         service_id = service["id"]
-        app = app_by_name.get(service_id)
+        app_id = service.get("app_id") or service_id
+        app = app_by_name.get(app_id)
 
         if not app:
             label, css = service_label_from_state(None, exists=False)
@@ -2256,10 +2320,20 @@ config_docker_statuses, config_docker_errors = collect_config_docker_services(co
 for error in config_docker_errors:
     collection_errors.append(("Configured Docker service query", error))
 
-config_checked_services = config_http_services + config_docker_services
+config_truenas_app_services = normalize_config_truenas_app_services(CONFIG_HOSTS, CONFIG_ENABLED_SERVICES)
+config_truenas_app_statuses, config_truenas_app_errors = collect_config_truenas_app_services(
+    CONFIG_HOSTS,
+    config_truenas_app_services,
+)
+
+for error in config_truenas_app_errors:
+    collection_errors.append(("Configured TrueNAS app query", error))
+
+config_checked_services = config_http_services + config_docker_services + config_truenas_app_services
 config_checked_statuses = {}
 config_checked_statuses.update(config_http_statuses)
 config_checked_statuses.update(config_docker_statuses)
+config_checked_statuses.update(config_truenas_app_statuses)
 
 for service in config_checked_services:
     status = config_checked_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
@@ -2275,6 +2349,9 @@ if config_http_services:
 
 if config_docker_services:
     print(f"Configured collector Docker services checked: {len(config_docker_services)}")
+
+if config_truenas_app_services:
+    print(f"Configured TrueNAS app services checked: {len(config_truenas_app_services)}")
 
 if nok_issues:
     overall_label = "NOK"
@@ -2324,6 +2401,7 @@ public_summary_statuses = build_config_summary_statuses(
     public_summary_services,
     config_http_statuses,
     config_docker_statuses,
+    config_truenas_app_statuses,
 )
 public_summary_preview_html = build_public_host_summary_preview(
     CONFIG_HOSTS,
