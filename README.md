@@ -225,7 +225,9 @@ Current Phase 2 public-preview behavior:
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
+- configured protection relationships can render preview backup/replication relationships from `config.yaml`
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
+- protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 The future model separates:
@@ -286,7 +288,7 @@ Planned improvements:
 - configuration-driven services
 - configuration-driven local storage checks
 - configuration-driven backup checks
-- configuration-driven protection relationships
+- live validation for configuration-driven protection relationships
 - Docker Compose runtime
 - `.env.example`
 - Dockerfile
