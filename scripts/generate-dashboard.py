@@ -585,10 +585,15 @@ def build_configured_hosts_preview(hosts):
 
     rows = ""
 
-    for host in hosts:
-        if not isinstance(host, dict):
-            continue
+    sorted_hosts = sorted(
+        [host for host in hosts if isinstance(host, dict)],
+        key=lambda host: (
+            not bool(host.get("enabled", True)),
+            str(host.get("display_name") or host.get("hostname") or host.get("id") or "").lower(),
+        ),
+    )
 
+    for host in sorted_hosts:
         enabled = bool(host.get("enabled", True))
         label = "ENABLED" if enabled else "DISABLED"
         css = "ok" if enabled else "info"
@@ -597,11 +602,17 @@ def build_configured_hosts_preview(hosts):
         host_type = host.get("type", "-")
         address = host.get("address", "-")
         host_id = host.get("id", "-")
+        web_url = host.get("web_url")
+
+        if web_url:
+            name_html = f'<a class="host-link" href="{h(web_url)}" target="_blank" rel="noopener noreferrer">{h(display_name)}</a>'
+        else:
+            name_html = h(display_name)
 
         rows += f"""
       <tr>
         <td>{badge(label, css)}</td>
-        <td>{h(display_name)}</td>
+        <td>{name_html}</td>
         <td>{h(host_id)}</td>
         <td>{h(host_type)}</td>
         <td><span class="mono">{h(address)}</span></td>
