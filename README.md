@@ -35,7 +35,7 @@ The public direction is now defined:
 - a self-documenting `config.yaml`
 - a future Docker Compose install flow on port `8099`
 - host-based public summary preview cards generated from configured hosts
-- a later four-card public summary model:
+- a public-preview four-card summary model:
   - Systems
   - Storage
   - Protection
@@ -226,6 +226,7 @@ Current Phase 2 public-preview behavior:
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
+- configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
@@ -293,7 +294,7 @@ Planned improvements:
 - `.env.example`
 - Dockerfile
 - safer first-run checks
-- public-preview layout moving from host-based cards toward four global summary cards
+- public-preview layout refinement for the four global summary cards
 - cleaner separation between personal deployment and public template
 
 ---

@@ -348,6 +348,12 @@ image_updates:
 # =============================================================================
 # 🩵 Optional: public dashboard top cards.
 #
+# Current public-preview behavior:
+# - controls the order and selection of the four-card preview row
+# - supported cards: systems, storage, protection, services
+# - unknown card names are ignored
+# - if no valid cards are configured, the default four cards are used
+#
 # Recommended default:
 # - systems
 # - storage
