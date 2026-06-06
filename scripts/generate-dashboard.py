@@ -663,11 +663,15 @@ def build_configured_hosts_preview(hosts, web_statuses=None):
         ),
     )
 
+    enabled_count = len([host for host in sorted_hosts if bool(host.get("enabled", True))])
+    disabled_count = len(sorted_hosts) - enabled_count
+
     for host in sorted_hosts:
         host_key = configured_host_key(host)
         enabled = bool(host.get("enabled", True))
         label = "ENABLED" if enabled else "DISABLED"
         css = "ok" if enabled else "info"
+        row_class = "enabled" if enabled else "disabled"
 
         display_name = host.get("display_name") or host.get("hostname") or host.get("id") or "-"
         host_type = host.get("type", "-")
@@ -685,7 +689,7 @@ def build_configured_hosts_preview(hosts, web_statuses=None):
             name_html = h(display_name)
 
         rows += f"""
-      <tr>
+      <tr class="configured-host-row {h(row_class)}">
         <td>{badge(label, css)}</td>
         <td>{name_html}</td>
         <td>{h(host_id)}</td>
@@ -700,8 +704,14 @@ def build_configured_hosts_preview(hosts, web_statuses=None):
 
     return f"""
   <div class="configured-hosts-preview">
-    <h3>Configured Hosts</h3>
-    <p class="muted-small">Preview from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.</p>
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Hosts</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(enabled_count)} enabled · {h(disabled_count)} disabled</div>
+    </div>
+    <p class="muted-small">Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.</p>
     <table>
       <tr>
         <th>Status</th>
@@ -2779,6 +2789,80 @@ pre, .mono {{
     flex-direction: column;
     gap: 3px;
   }}
+}}
+
+
+.configured-hosts-preview {{
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-left: 4px solid #9cc9ff;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  margin-top: 12px;
+  padding: 14px;
+}}
+
+.configured-hosts-preview-header {{
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 4px;
+}}
+
+.configured-hosts-kicker {{
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+
+.configured-hosts-preview h3 {{
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 2px 0 0;
+}}
+
+.configured-hosts-meta {{
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
+}}
+
+.muted-small {{
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 0 10px;
+}}
+
+.configured-hosts-preview table {{
+  font-size: 12px;
+  margin-top: 8px;
+}}
+
+.configured-hosts-preview th {{
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+}}
+
+.configured-hosts-preview td {{
+  background: #ffffff;
+}}
+
+.configured-host-row.disabled td {{
+  color: #64748b;
+  opacity: 0.82;
+}}
+
+.configured-host-row.disabled .host-link {{
+  color: #64748b;
 }}
 
 .dashboard-footer {{
