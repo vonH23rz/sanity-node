@@ -164,6 +164,11 @@ hosts:
 # - check: truenas_app -> TrueNAS SCALE app status, future/config-driven path
 # - check: docker      -> Docker container status, future/config-driven path
 #
+# Current public-preview behavior:
+# - http checks are active and can report UP/DOWN
+# - truenas_app and docker are shown as NOT CHECKED until their config-driven
+#   check engines are implemented
+#
 # To use one:
 # 1. copy or edit the block
 # 2. change host/name/url/container/app_id
