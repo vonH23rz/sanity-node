@@ -4,15 +4,114 @@ import subprocess
 import json
 import html
 import re
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
 
-OUT = Path("/opt/homelab-dashboard/html/index.html")
+OUT = Path(os.environ.get("SANITY_NODE_OUTPUT", "/opt/homelab-dashboard/html/index.html"))
+CONFIG_PATH = Path(os.environ.get("SANITY_NODE_CONFIG", "/app/config/config.yaml"))
 
-SSH_USER = "truenas_admin"
-SSH_KEY = "/home/controls/.ssh/id_ed25519"
 
+def load_config(path):
+    if not path.exists():
+        return {}
+
+    try:
+        import yaml
+    except Exception as exc:
+        print(f"Config file found at {path}, but PyYAML is unavailable: {exc}")
+        return {}
+
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception as exc:
+        print(f"Failed to read config file {path}: {exc}")
+        return {}
+
+    if not isinstance(data, dict):
+        print(f"Config file {path} did not contain a YAML mapping; ignoring it")
+        return {}
+
+    return data
+
+
+CONFIG = load_config(CONFIG_PATH)
+
+
+def cfg_get(path, default=None):
+    current = CONFIG
+
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return default
+        current = current[key]
+
+    return current
+
+
+def cfg_int(path, default):
+    value = cfg_get(path, default)
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def cfg_list(path, default=None):
+    value = cfg_get(path, default if default is not None else [])
+
+    if isinstance(value, list):
+        return value
+
+    print(f"Config value {'.'.join(path)} is not a list; ignoring it")
+    return []
+
+
+def enabled_items(items):
+    return [
+        item for item in items
+        if isinstance(item, dict) and item.get("enabled", True)
+    ]
+
+
+CONFIG_HOSTS = cfg_list(("hosts",))
+CONFIG_ENABLED_HOSTS = enabled_items(CONFIG_HOSTS)
+
+CONFIG_SERVICES = cfg_list(("services",))
+CONFIG_ENABLED_SERVICES = enabled_items(CONFIG_SERVICES)
+
+CONFIG_PROTECTION = cfg_list(("protection",))
+CONFIG_ENABLED_PROTECTION = enabled_items(CONFIG_PROTECTION)
+
+print(
+    "Loaded config inventory: "
+    f"{len(CONFIG_ENABLED_HOSTS)}/{len(CONFIG_HOSTS)} hosts enabled, "
+    f"{len(CONFIG_ENABLED_SERVICES)}/{len(CONFIG_SERVICES)} services enabled, "
+    f"{len(CONFIG_ENABLED_PROTECTION)}/{len(CONFIG_PROTECTION)} protection relationships enabled"
+)
+
+
+DASHBOARD_TITLE = str(cfg_get(("dashboard", "title"), "Sanity Node"))
+DASHBOARD_SUBTITLE = str(cfg_get(("dashboard", "subtitle"), "Observe. Announce. Stay sane."))
+REFRESH_MINUTES = cfg_int(("dashboard", "refresh_minutes"), 5)
+COLLECTOR_DISPLAY_NAME = str(cfg_get(("collector", "display_name"), "Utility Node"))
+STALE_AFTER_SECONDS = max(REFRESH_MINUTES, 1) * 3 * 60
+
+SSH_USER = os.environ.get("SANITY_NODE_SSH_USER", "truenas_admin")
+SSH_KEY = os.environ.get("SANITY_NODE_SSH_KEY", "/home/controls/.ssh/id_ed25519")
+
+# ---------------------------------------------------------------------------
+# Reference dashboard runtime configuration
+# ---------------------------------------------------------------------------
+#
+# These values still describe the original/personal reference dashboard.
+# Phase 2 public-runtime work is being added beside this path first, using
+# CONFIG_HOSTS / CONFIG_SERVICES and preview-only rendering. Do not remove or
+# rewrite the reference runtime in one large step; migrate collectors and layout
+# gradually while keeping the known-good dashboard behavior available.
+#
 T620_IP = "192.168.30.10"
 T330_IP = "192.168.30.33"
 
@@ -114,6 +213,135 @@ def collect_local_docker_services(services):
         statuses[service_id] = {"label": label, "css": css, "raw": raw_state}
 
     return statuses, errors
+
+
+def config_service_safe_name(name):
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name).lower()).strip("-")
+
+
+def normalize_config_service(service, index):
+    if not isinstance(service, dict):
+        return None
+
+    name = service.get("name") or service.get("id") or f"Service {index}"
+    safe_name = config_service_safe_name(name)
+    service_id = service.get("id") or f"config-service-{index}-{safe_name or 'service'}"
+
+    service_type = service.get("type", "app")
+    if service_type not in ("app", "helper"):
+        service_type = "app"
+
+    return {
+        "id": str(service_id),
+        "display": str(name),
+        "type": service_type,
+        "url": service.get("url"),
+        "host": service.get("host"),
+        "check": service.get("check"),
+    }
+
+
+def normalize_config_services_for_summary(services):
+    normalized = []
+
+    for index, service in enumerate(services, start=1):
+        normalized_service = normalize_config_service(service, index)
+        if normalized_service:
+            normalized.append(normalized_service)
+
+    return normalized
+
+
+def normalize_config_http_services(services):
+    return [
+        service for service in normalize_config_services_for_summary(services)
+        if service.get("check") == "http"
+    ]
+
+
+def collect_http_services(services):
+    statuses = {}
+
+    for service in services:
+        service_id = service["id"]
+        url = service.get("url")
+
+        if not url:
+            statuses[service_id] = {"label": "UNKNOWN", "css": "info", "raw": "missing url"}
+            continue
+
+        try:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-k",
+                    "-L",
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "--connect-timeout",
+                    "5",
+                    "--max-time",
+                    "10",
+                    "-w",
+                    "%{http_code}",
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            http_code = (result.stdout + result.stderr).strip()
+            ok = (
+                result.returncode == 0
+                and http_code.isdigit()
+                and int(http_code) != 0
+                and int(http_code) < 500
+            )
+
+            if ok:
+                statuses[service_id] = {"label": "UP", "css": "ok", "raw": f"HTTP {http_code}"}
+            else:
+                raw = f"HTTP {http_code}" if http_code else "HTTP check failed"
+                statuses[service_id] = {"label": "DOWN", "css": "bad", "raw": raw}
+
+        except Exception as e:
+            statuses[service_id] = {"label": "DOWN", "css": "bad", "raw": str(e)}
+
+    return statuses
+
+
+
+def build_config_summary_statuses(services, http_statuses):
+    # Preview-only: HTTP checks are live today; Docker and TrueNAS app checks are
+    # documented future/config-driven paths. Show them as intentionally not
+    # checked instead of letting summary cards fall back to UNKNOWN.
+    statuses = dict(http_statuses)
+
+    for service in services:
+        service_id = service["id"]
+
+        if service_id in statuses:
+            continue
+
+        check_type = service.get("check") or "none"
+
+        if check_type == "http":
+            statuses[service_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "HTTP service was not checked",
+            }
+        else:
+            statuses[service_id] = {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": f"{check_type} checks are not active in the public preview yet",
+            }
+
+    return statuses
+
 
 
 def collect_truenas_app_services(ip, services):
@@ -405,6 +633,252 @@ def build_service_summary(services, statuses):
     }
 
 
+
+
+def configured_host_key(host):
+    return str(host.get("id") or host.get("display_name") or host.get("hostname") or host.get("address") or "")
+
+
+def collect_configured_host_web_statuses(hosts):
+    statuses = {}
+
+    for host in hosts:
+        if not isinstance(host, dict):
+            continue
+
+        host_key = configured_host_key(host)
+
+        if not host_key:
+            continue
+
+        if not bool(host.get("enabled", True)):
+            statuses[host_key] = {"label": "DISABLED", "css": "info", "raw": "host disabled"}
+            continue
+
+        web_url = host.get("web_url")
+
+        if not web_url:
+            statuses[host_key] = {"label": "NO URL", "css": "info", "raw": "missing web_url"}
+            continue
+
+        try:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-k",
+                    "-L",
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "--connect-timeout",
+                    "5",
+                    "--max-time",
+                    "10",
+                    "-w",
+                    "%{http_code}",
+                    str(web_url),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            http_code = (result.stdout + result.stderr).strip()
+            ok = (
+                result.returncode == 0
+                and http_code.isdigit()
+                and int(http_code) != 0
+                and int(http_code) < 500
+            )
+
+            if ok:
+                statuses[host_key] = {"label": "OK", "css": "ok", "raw": f"HTTP {http_code}"}
+            else:
+                raw = f"HTTP {http_code}" if http_code else "HTTP check failed"
+                statuses[host_key] = {"label": "DOWN", "css": "bad", "raw": raw}
+
+        except Exception as e:
+            statuses[host_key] = {"label": "DOWN", "css": "bad", "raw": str(e)}
+
+    return statuses
+
+
+def build_configured_hosts_preview(hosts, web_statuses=None):
+    if not hosts:
+        return ""
+
+    web_statuses = web_statuses or {}
+    rows = ""
+
+    sorted_hosts = sorted(
+        [host for host in hosts if isinstance(host, dict)],
+        key=lambda host: (
+            not bool(host.get("enabled", True)),
+            str(host.get("display_name") or host.get("hostname") or host.get("id") or "").lower(),
+        ),
+    )
+
+    enabled_count = len([host for host in sorted_hosts if bool(host.get("enabled", True))])
+    disabled_count = len(sorted_hosts) - enabled_count
+
+    for host in sorted_hosts:
+        host_key = configured_host_key(host)
+        enabled = bool(host.get("enabled", True))
+        label = "ENABLED" if enabled else "DISABLED"
+        css = "ok" if enabled else "info"
+        row_class = "enabled" if enabled else "disabled"
+
+        display_name = host.get("display_name") or host.get("hostname") or host.get("id") or "-"
+        host_type = host.get("type", "-")
+        address = host.get("address", "-")
+        host_id = host.get("id", "-")
+        web_url = host.get("web_url")
+
+        web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        web_label = web_status.get("label", "UNKNOWN")
+        web_css = web_status.get("css", "info")
+
+        if web_url:
+            name_html = f'<a class="host-link" href="{h(web_url)}" target="_blank" rel="noopener noreferrer">{h(display_name)}</a>'
+        else:
+            name_html = h(display_name)
+
+        rows += f"""
+      <tr class="configured-host-row {h(row_class)}">
+        <td>{badge(label, css)}</td>
+        <td>{name_html}</td>
+        <td>{h(host_id)}</td>
+        <td>{h(host_type)}</td>
+        <td><span class="mono">{h(address)}</span></td>
+        <td>{badge(web_label, web_css)}</td>
+      </tr>
+"""
+
+    if not rows:
+        return ""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Hosts</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(enabled_count)} enabled · {h(disabled_count)} disabled</div>
+    </div>
+    <p class="muted-small">Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Name</th>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Address</th>
+        <th>Web UI</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+"""
+
+
+
+def configured_host_display_name(host):
+    return str(host.get("display_name") or host.get("hostname") or host.get("id") or "Configured Host")
+
+
+def configured_host_sort_key(host):
+    # Public summary cards are host/system based, not category based.
+    # Preferred order:
+    #   1. collector / Utility Node
+    #   2. TrueNAS systems
+    #   3. any additional enabled configured hosts
+    host_id = str(host.get("id") or "").lower()
+    host_type = str(host.get("type") or "").lower()
+    collector_id = str(cfg_get(("collector", "id"), "collector")).lower()
+
+    if host_id == collector_id or host_id == "collector":
+        group = 0
+    elif host_type == "truenas":
+        group = 1
+    else:
+        group = 2
+
+    return (group, configured_host_display_name(host).lower())
+
+
+def build_public_host_summary_preview(hosts, services, statuses, web_statuses=None):
+    # This is intentionally preview-only while the existing reference summary row
+    # remains active. The four-column CSS is a layout maximum, not a fixed number
+    # of required cards: two configured hosts should render two summary cards.
+    enabled_hosts = enabled_items(hosts)
+    web_statuses = web_statuses or {}
+
+    if not enabled_hosts:
+        return ""
+
+    sorted_hosts = sorted(enabled_hosts, key=configured_host_sort_key)
+    services_by_host = {}
+
+    for service in services:
+        host_id = service.get("host")
+        if not host_id:
+            continue
+
+        services_by_host.setdefault(str(host_id), []).append(service)
+
+    cards_html = ""
+
+    for host in sorted_hosts:
+        host_id = str(host.get("id") or "")
+        title = configured_host_display_name(host)
+        host_key = configured_host_key(host)
+        host_web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        host_services = services_by_host.get(host_id, [])
+        summary = build_service_summary(host_services, statuses)
+        host_web_css = host_web_status.get("css", "info")
+        host_card_css = summary["css"]
+
+        if host_web_css == "bad":
+            host_card_css = "bad"
+        elif host_web_css == "info" and not host_card_css:
+            host_card_css = "info"
+
+        details = summary["details"]
+        summary_value = summary["value"]
+        details_class = summary["details_class"]
+
+        if not details:
+            summary_value = "No services configured yet"
+            details_class = ""
+            details = '<span class="service-line"><strong>Host Web UI only</strong> <span class="info-text">INFO</span></span>'
+
+        cards_html += f"""
+    <div class="summary-card {h(host_card_css)}">
+      <div class="title">{h(title)} {badge(host_web_status.get("label", "UNKNOWN"), host_web_status.get("css", "info"))}</div>
+      <div class="value">{h(summary_value)}</div>
+      <div class="summary-details service-details {h(details_class)}">
+        {details}
+      </div>
+    </div>
+"""
+
+    return f"""
+<div class="public-summary-preview">
+  <div class="public-summary-preview-header">
+    <div>
+      <div class="public-summary-kicker">Public Layout Preview</div>
+      <h2>Host-based summary direction</h2>
+    </div>
+    <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
+  </div>
+  <div class="public-summary-row">
+    {cards_html}
+  </div>
+</div>
+"""
+
+
 def h(value):
     return html.escape(str(value))
 
@@ -656,7 +1130,7 @@ def temp_badge(label, css):
 def status_text_class(label):
     if label in ("OK", "FINISHED", "SUCCESS", "YES", "ONLINE", "UP"):
         return "ok-text"
-    if label in ("INFO", "PENDING", "RUNNING", "UNKNOWN"):
+    if label in ("INFO", "PENDING", "RUNNING", "UNKNOWN", "NOT CHECKED"):
         return "info-text"
     if label in ("WARNING", "OLD", "DIFFERENT"):
         return "warning-text"
@@ -1402,6 +1876,13 @@ for system_name in system_info_order:
 
 pool_rows = ""
 pool_rows_by_host = {host_name: "" for host_name in HOSTS}
+storage_pool_total = 0
+storage_pool_status_counts = {
+    "OK": 0,
+    "INFO": 0,
+    "WARNING": 0,
+    "BAD": 0,
+}
 
 for host_name, host_info in HOSTS.items():
     ip = host_info["ip"]
@@ -1463,6 +1944,17 @@ for host_name, host_info in HOSTS.items():
             row_css = "info"
         else:
             row_css = "ok"
+
+        storage_pool_total += 1
+
+        if row_css == "bad":
+            storage_pool_status_counts["BAD"] += 1
+        elif row_css == "warning":
+            storage_pool_status_counts["WARNING"] += 1
+        elif row_css == "info":
+            storage_pool_status_counts["INFO"] += 1
+        else:
+            storage_pool_status_counts["OK"] += 1
 
         pool_rows += f"""
 <tr class="{row_css}">
@@ -1619,6 +2111,10 @@ for system_name in system_info_order:
 
 
 
+configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
+configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
+
+
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
 snapshot_detail_html = ""
@@ -1698,6 +2194,21 @@ for service in T620_SERVICES:
 beckhoff_service_summary = build_service_summary(BECKHOFF_SERVICES, beckhoff_service_statuses)
 t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuses)
 
+config_http_services = normalize_config_http_services(CONFIG_ENABLED_SERVICES)
+config_http_statuses = collect_http_services(config_http_services)
+
+for service in config_http_services:
+    status = config_http_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
+    label = status["label"]
+
+    if status.get("css") == "bad":
+        nok_issues.append(f"Configured service {service['display']} is {label}")
+    elif label != "UP":
+        info_issues.append(f"Configured service {service['display']} is {label}")
+
+if config_http_services:
+    print(f"Configured HTTP services checked: {len(config_http_services)}")
+
 if nok_issues:
     overall_label = "NOK"
     overall_css = "bad"
@@ -1741,12 +2252,21 @@ if collection_errors:
 </section>
 """
 
+public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
+public_summary_statuses = build_config_summary_statuses(public_summary_services, config_http_statuses)
+public_summary_preview_html = build_public_host_summary_preview(
+    CONFIG_HOSTS,
+    public_summary_services,
+    public_summary_statuses,
+    configured_host_web_statuses,
+)
+
 page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Sanity Node</title>
+<title>{h(DASHBOARD_TITLE)}</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -1986,6 +2506,75 @@ pre, .mono {{
 .overall-status.stale {{
   border-left-color: #ff453a;
   background: var(--panel);
+}}
+
+
+.public-summary-preview {{
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  margin: -2px 0 16px;
+  padding: 14px;
+}}
+
+.public-summary-preview-header {{
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}}
+
+.public-summary-kicker {{
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+
+.public-summary-preview h2 {{
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 2px 0 0;
+}}
+
+.public-summary-note {{
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
+}}
+
+.public-summary-row {{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}}
+
+.public-summary-row .summary-card {{
+  box-shadow: none;
+}}
+
+@media (max-width: 1200px) {{
+  .public-summary-row {{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }}
+}}
+
+@media (max-width: 900px) {{
+  .public-summary-preview-header {{
+    flex-direction: column;
+  }}
+
+  .public-summary-row {{
+    grid-template-columns: 1fr;
+  }}
 }}
 
 .summary-row {{
@@ -2437,6 +3026,80 @@ pre, .mono {{
   }}
 }}
 
+
+.configured-hosts-preview {{
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-left: 4px solid #9cc9ff;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  margin-top: 12px;
+  padding: 14px;
+}}
+
+.configured-hosts-preview-header {{
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 4px;
+}}
+
+.configured-hosts-kicker {{
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+
+.configured-hosts-preview h3 {{
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 2px 0 0;
+}}
+
+.configured-hosts-meta {{
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
+}}
+
+.muted-small {{
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 0 10px;
+}}
+
+.configured-hosts-preview table {{
+  font-size: 12px;
+  margin-top: 8px;
+}}
+
+.configured-hosts-preview th {{
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+}}
+
+.configured-hosts-preview td {{
+  background: #ffffff;
+}}
+
+.configured-host-row.disabled td {{
+  color: #64748b;
+  opacity: 0.82;
+}}
+
+.configured-host-row.disabled .host-link {{
+  color: #64748b;
+}}
+
 .dashboard-footer {{
   margin-top: 14px;
   padding: 10px 4px 2px;
@@ -2455,15 +3118,15 @@ pre, .mono {{
 <body>
 <header>
   <div class="header-left">
-    <img class="header-logo" src="/favicon-96x96.png" alt="Sanity Node logo">
+    <img class="header-logo" src="/favicon-96x96.png" alt="{h(DASHBOARD_TITLE)} logo">
     <div class="header-title">
-      <h1>Sanity Node</h1>
-      <div class="subtitle">Observe. Announce. Stay sane.</div>
+      <h1>{h(DASHBOARD_TITLE)}</h1>
+      <div class="subtitle">{h(DASHBOARD_SUBTITLE)}</div>
     </div>
   </div>
   <div class="header-meta">
     <div class="label">Generated:</div><div>{h(generated.strftime("%Y-%m-%d %H:%M:%S"))}</div>
-    <div class="label">Collector:</div><div>Utility Node</div>
+    <div class="label">Collector:</div><div>{h(COLLECTOR_DISPLAY_NAME)}</div>
   </div>
 </header>
 
@@ -2471,7 +3134,7 @@ pre, .mono {{
   <strong id="overallStatusText">Overall Status: {h(overall_label)}</strong>
   <div class="meta">
     <span>Last generated {h(generated.strftime("%Y-%m-%d %H:%M"))}</span>
-    <span>Collector Utility Node</span>
+    <span>Collector {h(COLLECTOR_DISPLAY_NAME)}</span>
     <span id="overallStatusNote">{h(overall_note)}</span>
   </div>
 </div>
@@ -2514,22 +3177,25 @@ pre, .mono {{
   </div>
 </div>
 
+{public_summary_preview_html}
+
 <section>
   <h2>1. Systems</h2>
   <div class="systems-list">
     {systems_layout_html}
   </div>
+  {configured_hosts_preview_html}
 </section>
 
 {errors_section}
 
 <footer class="dashboard-footer">
-  Generated by <strong>Sanity Node</strong> · Collector: <strong>Utility Node</strong> · Refresh: <strong>5 min</strong>
+  Generated by <strong>{h(DASHBOARD_TITLE)}</strong> · Collector: <strong>{h(COLLECTOR_DISPLAY_NAME)}</strong> · Refresh: <strong>{h(REFRESH_MINUTES)} min</strong>
 </footer>
 
 <script>
 const generatedEpoch = {generated_epoch};
-const staleAfterSeconds = 15 * 60;
+const staleAfterSeconds = {STALE_AFTER_SECONDS};
 
 function checkDashboardFreshness() {{
   const age = Math.floor(Date.now() / 1000) - generatedEpoch;

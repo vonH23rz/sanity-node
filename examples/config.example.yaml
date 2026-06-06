@@ -54,6 +54,14 @@ collector:
 # - a Linux host
 # - the collector node itself
 # - another server, lab machine, archive node, or Docker host
+#
+# Public summary cards are generated per enabled host.
+# Card order is:
+# 1. collector / Utility Node
+# 2. TrueNAS systems
+# 3. additional enabled hosts
+#
+# Disabled hosts are ignored until enabled.
 
 hosts:
   # ---------------------------------------------------------------------------
@@ -142,6 +150,24 @@ hosts:
 #
 # Example services are disabled by default.
 # HTTP checks are often the easiest and safest way to monitor web services.
+#
+# Services are grouped onto the summary card of their host:
+# - host: collector  -> appears on the Utility Node card
+# - host: host1      -> appears on the TrueNAS Server 1 card
+#
+# Service type controls the summary count:
+# - type: app        -> counted as an App
+# - type: helper     -> counted as a Helper
+#
+# Check type controls how Sanity Node checks the service:
+# - check: http        -> HTTP/HTTPS reachability check
+# - check: truenas_app -> TrueNAS SCALE app status, future/config-driven path
+# - check: docker      -> Docker container status, future/config-driven path
+#
+# Current public-preview behavior:
+# - http checks are active and can report UP/DOWN
+# - truenas_app and docker are shown as NOT CHECKED until their config-driven
+#   check engines are implemented
 #
 # To use one:
 # 1. copy or edit the block

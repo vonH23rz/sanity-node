@@ -1,0 +1,31 @@
+services:
+  sanity-node:
+    build: .
+    container_name: sanity-node
+    restart: unless-stopped
+
+    ports:
+      - "${SANITY_NODE_PORT:-8099}:8099"
+
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - SANITY_NODE_CONFIG=${SANITY_NODE_CONFIG:-/app/config/config.yaml}
+      - SANITY_NODE_OUTPUT=${SANITY_NODE_OUTPUT:-/app/html/index.html}
+      - SANITY_NODE_SSH_USER=${SANITY_NODE_SSH_USER:-truenas_admin}
+      - SANITY_NODE_SSH_KEY=${SANITY_NODE_SSH_KEY:-/app/ssh/id_ed25519}
+      - SANITY_NODE_REFRESH_SECONDS=${SANITY_NODE_REFRESH_SECONDS:-300}
+      - SANITY_NODE_PORT=8099
+
+    volumes:
+      - ./config:/app/config:ro
+      - ./ssh:/app/ssh:ro
+      - ./html:/app/html
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

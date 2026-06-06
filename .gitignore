@@ -9,6 +9,10 @@ config.yml
 .env
 *.env
 
+# Runtime directories
+config/
+logs/
+
 # Logs and runtime files
 *.log
 *.pid
