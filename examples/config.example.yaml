@@ -268,8 +268,16 @@ local_storage:
 # =============================================================================
 # Backup status checks
 # =============================================================================
-# 🩵 Optional: monitor a local backup script, timer, marker file, and log folder.
-# This check is useful if your collector node runs its own backup script.
+# 🩵 Optional: monitor a backup marker file, optional systemd timer, log folder,
+# and backup target label.
+#
+# Current public-preview behavior:
+# - collector-local checks are active
+# - marker_file age is checked against max_age_hours
+# - systemd_timer is optional and checked when configured
+# - checks for other hosts are shown as NOT CHECKED for now
+# - max_age_hours defaults to 36 if omitted
+#
 # Keep enabled: false unless those files and the timer exist on your system.
 
 backup_checks:

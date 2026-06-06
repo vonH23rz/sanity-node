@@ -88,12 +88,16 @@ CONFIG_ENABLED_PROTECTION = enabled_items(CONFIG_PROTECTION)
 CONFIG_LOCAL_STORAGE = cfg_list(("local_storage",))
 CONFIG_ENABLED_LOCAL_STORAGE = enabled_items(CONFIG_LOCAL_STORAGE)
 
+CONFIG_BACKUP_CHECKS = cfg_list(("backup_checks",))
+CONFIG_ENABLED_BACKUP_CHECKS = enabled_items(CONFIG_BACKUP_CHECKS)
+
 print(
     "Loaded config inventory: "
     f"{len(CONFIG_ENABLED_HOSTS)}/{len(CONFIG_HOSTS)} hosts enabled, "
     f"{len(CONFIG_ENABLED_SERVICES)}/{len(CONFIG_SERVICES)} services enabled, "
     f"{len(CONFIG_ENABLED_PROTECTION)}/{len(CONFIG_PROTECTION)} protection relationships enabled, "
-    f"{len(CONFIG_ENABLED_LOCAL_STORAGE)}/{len(CONFIG_LOCAL_STORAGE)} local storage checks enabled"
+    f"{len(CONFIG_ENABLED_LOCAL_STORAGE)}/{len(CONFIG_LOCAL_STORAGE)} local storage checks enabled, "
+    f"{len(CONFIG_ENABLED_BACKUP_CHECKS)}/{len(CONFIG_BACKUP_CHECKS)} backup checks enabled"
 )
 
 
@@ -905,6 +909,187 @@ def build_config_local_storage_preview(checks, statuses):
         <th>Label</th>
         <th>Host</th>
         <th>Mount</th>
+        <th>Result</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+"""
+
+
+
+
+def normalize_config_backup_checks(checks):
+    normalized = []
+
+    for index, check in enumerate(checks, start=1):
+        if not isinstance(check, dict):
+            continue
+
+        name = check.get("name") or check.get("id") or f"Backup Check {index}"
+        check_id = check.get("id") or f"config-backup-{index}-{config_service_safe_name(name)}"
+
+        normalized.append({
+            "id": str(check_id),
+            "host": check.get("host"),
+            "name": str(name),
+            "marker_file": check.get("marker_file"),
+            "log_dir": check.get("log_dir"),
+            "systemd_timer": check.get("systemd_timer"),
+            "target": check.get("target"),
+            "max_age_hours": config_percent(check.get("max_age_hours"), 36),
+        })
+
+    return normalized
+
+
+def collect_config_backup_checks(checks):
+    statuses = {}
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+
+    for check in checks:
+        check_id = check["id"]
+        host_id = str(check.get("host") or "")
+
+        if host_id not in (collector_id, "collector"):
+            statuses[check_id] = {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "backup checks are active for the collector node only",
+            }
+            continue
+
+        marker_file = check.get("marker_file")
+
+        if not marker_file:
+            statuses[check_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "missing marker_file",
+            }
+            continue
+
+        marker_path = Path(str(marker_file))
+
+        if not marker_path.exists():
+            statuses[check_id] = {
+                "label": "MISSING",
+                "css": "bad",
+                "raw": f"marker file missing: {marker_file}",
+            }
+            continue
+
+        try:
+            marker_dt = datetime.fromtimestamp(marker_path.stat().st_mtime)
+            age_hours = (datetime.now() - marker_dt).total_seconds() / 3600
+        except Exception as e:
+            statuses[check_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": f"could not read marker age: {e}",
+            }
+            continue
+
+        timer = check.get("systemd_timer")
+        timer_note = "no timer configured"
+        timer_css = "info"
+
+        if timer:
+            try:
+                timer_result = subprocess.run(
+                    ["systemctl", "is-active", str(timer)],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                timer_state = (timer_result.stdout + timer_result.stderr).strip() or "unknown"
+
+                if timer_result.returncode == 0 and timer_state == "active":
+                    timer_note = f"timer active: {timer}"
+                    timer_css = "ok"
+                else:
+                    timer_note = f"timer {timer_state}: {timer}"
+                    timer_css = "warning"
+            except Exception as e:
+                timer_note = f"timer unknown: {e}"
+                timer_css = "info"
+
+        max_age_hours = check["max_age_hours"]
+
+        if age_hours > max_age_hours:
+            label = "OLD"
+            css = "warning"
+        elif timer and timer_css == "warning":
+            label = "WARNING"
+            css = "warning"
+        else:
+            label = "OK"
+            css = "ok"
+
+        age_text = f"{age_hours:.1f}h old"
+        raw_parts = [
+            f"marker {age_text}",
+            f"max {max_age_hours}h",
+            timer_note,
+        ]
+
+        target = check.get("target")
+        if target:
+            raw_parts.append(f"target: {target}")
+
+        log_dir = check.get("log_dir")
+        if log_dir:
+            raw_parts.append(f"log: {log_dir}")
+
+        statuses[check_id] = {
+            "label": label,
+            "css": css,
+            "raw": " · ".join(raw_parts),
+            "age_hours": age_hours,
+        }
+
+    return statuses
+
+
+def build_config_backup_preview(checks, statuses):
+    if not checks:
+        return ""
+
+    rows = ""
+
+    for check in checks:
+        check_id = check["id"]
+        status = statuses.get(check_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+        raw = status.get("raw", "-")
+
+        rows += f"""
+      <tr class="{h(css)}">
+        <td>{badge(label, css)}</td>
+        <td>{h(check.get("name", "-"))}</td>
+        <td><span class="mono">{h(check.get("host", "-"))}</span></td>
+        <td><span class="mono">{h(check.get("marker_file", "-"))}</span></td>
+        <td>{h(raw)}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Backup Status</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(len(checks))} checks</div>
+    </div>
+    <p class="muted-small">Collector-local marker file and optional systemd timer checks are active. Backup checks for other hosts are shown as NOT CHECKED for now.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Name</th>
+        <th>Host</th>
+        <th>Marker</th>
         <th>Result</th>
       </tr>
       {rows}
@@ -2401,6 +2586,13 @@ config_local_storage_preview_html = build_config_local_storage_preview(
     config_local_storage_statuses,
 )
 
+config_backup_checks = normalize_config_backup_checks(CONFIG_ENABLED_BACKUP_CHECKS)
+config_backup_statuses = collect_config_backup_checks(config_backup_checks)
+config_backup_preview_html = build_config_backup_preview(
+    config_backup_checks,
+    config_backup_statuses,
+)
+
 
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
@@ -3506,6 +3698,8 @@ pre, .mono {{
   {configured_hosts_preview_html}
 
   {config_local_storage_preview_html}
+
+  {config_backup_preview_html}
 </section>
 
 {errors_section}
