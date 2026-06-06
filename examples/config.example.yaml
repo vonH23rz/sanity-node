@@ -162,13 +162,14 @@ hosts:
 # Check type controls how Sanity Node checks the service:
 # - check: http        -> HTTP/HTTPS reachability check
 # - check: docker      -> local collector Docker container status
-# - check: truenas_app -> TrueNAS SCALE app status, future/config-driven path
+# - check: truenas_app -> configured TrueNAS SCALE app status
 #
 # Current public-preview behavior:
 # - http checks are active and can report UP/DOWN
 # - docker checks are active for containers on the collector node
 # - docker checks for other hosts are shown as NOT CHECKED for now
-# - truenas_app is shown as NOT CHECKED until its config-driven collector is implemented
+# - truenas_app checks are active for enabled type: truenas hosts with an address
+# - truenas_app checks on non-TrueNAS hosts are shown as NOT CHECKED for now
 #
 # To use one:
 # 1. copy or edit the block
