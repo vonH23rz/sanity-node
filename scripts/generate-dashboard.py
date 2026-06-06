@@ -102,6 +102,16 @@ STALE_AFTER_SECONDS = max(REFRESH_MINUTES, 1) * 3 * 60
 SSH_USER = os.environ.get("SANITY_NODE_SSH_USER", "truenas_admin")
 SSH_KEY = os.environ.get("SANITY_NODE_SSH_KEY", "/home/controls/.ssh/id_ed25519")
 
+# ---------------------------------------------------------------------------
+# Reference dashboard runtime configuration
+# ---------------------------------------------------------------------------
+#
+# These values still describe the original/personal reference dashboard.
+# Phase 2 public-runtime work is being added beside this path first, using
+# CONFIG_HOSTS / CONFIG_SERVICES and preview-only rendering. Do not remove or
+# rewrite the reference runtime in one large step; migrate collectors and layout
+# gradually while keeping the known-good dashboard behavior available.
+#
 T620_IP = "192.168.30.10"
 T330_IP = "192.168.30.33"
 
