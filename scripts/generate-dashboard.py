@@ -91,6 +91,8 @@ CONFIG_ENABLED_LOCAL_STORAGE = enabled_items(CONFIG_LOCAL_STORAGE)
 CONFIG_BACKUP_CHECKS = cfg_list(("backup_checks",))
 CONFIG_ENABLED_BACKUP_CHECKS = enabled_items(CONFIG_BACKUP_CHECKS)
 
+CONFIG_SUMMARY_CARDS = cfg_list(("summary_cards",), ["systems", "storage", "protection", "services"])
+
 print(
     "Loaded config inventory: "
     f"{len(CONFIG_ENABLED_HOSTS)}/{len(CONFIG_HOSTS)} hosts enabled, "
@@ -1475,6 +1477,258 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
   </div>
 </div>
 """
+
+def build_public_summary_card(title, value, details, css="", details_class=""):
+    return f"""
+    <div class="summary-card {h(css)}">
+      <div class="title">{h(title)}</div>
+      <div class="value">{h(value)}</div>
+      <div class="summary-details service-details {h(details_class)}">
+        {details}
+      </div>
+    </div>
+"""
+
+
+def public_summary_text_class(status_label, css="info"):
+    if css == "ok":
+        return "ok-text"
+    if css == "warning":
+        return "warning-text"
+    if css == "bad":
+        return "bad-text"
+    if css == "info":
+        return "info-text"
+
+    return status_text_class(status_label)
+
+
+def build_public_summary_detail(label, status_label, css="info"):
+    return (
+        '<span class="service-line">'
+        f'<strong>{h(label)}</strong> '
+        f'<span class="{public_summary_text_class(status_label, css)}">{h(status_label)}</span>'
+        '</span>\n'
+    )
+
+
+def public_card_css(bad_count=0, warning_count=0, info_count=0):
+    if bad_count:
+        return "bad"
+    if warning_count:
+        return "warning"
+    if info_count:
+        return "info"
+    return ""
+
+
+def build_public_systems_summary_card(hosts, web_statuses):
+    enabled_hosts = sorted(enabled_items(hosts), key=configured_host_sort_key)
+
+    if not enabled_hosts:
+        return build_public_summary_card(
+            "Systems",
+            "No systems configured yet",
+            build_public_summary_detail("config.yaml", "INFO", "info"),
+            "info",
+        )
+
+    ok_count = 0
+    down_count = 0
+    info_count = 0
+    details = ""
+
+    for host in enabled_hosts:
+        host_key = configured_host_key(host)
+        display_name = configured_host_display_name(host)
+        status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+
+        if label == "OK":
+            ok_count += 1
+        elif css == "bad":
+            down_count += 1
+        else:
+            info_count += 1
+
+        details += build_public_summary_detail(display_name, label, css)
+
+    value = f"{len(enabled_hosts)} Systems · {ok_count} OK · {down_count} DOWN"
+
+    if info_count:
+        value += f" · {info_count} INFO"
+
+    return build_public_summary_card(
+        "Systems",
+        value,
+        details,
+        public_card_css(down_count, 0, info_count),
+        "two-column" if len(enabled_hosts) > 6 else "",
+    )
+
+
+def build_public_storage_summary_card(checks, statuses):
+    if not checks:
+        return build_public_summary_card(
+            "Storage",
+            "No storage checks configured yet",
+            build_public_summary_detail("local_storage", "INFO", "info"),
+            "info",
+        )
+
+    ok_count = 0
+    warning_count = 0
+    bad_count = 0
+    info_count = 0
+    details = ""
+
+    for check in checks:
+        check_id = check["id"]
+        name = check.get("label") or check.get("mount") or check_id
+        status = statuses.get(check_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+
+        if label == "OK":
+            ok_count += 1
+        elif css == "bad":
+            bad_count += 1
+        elif css == "warning":
+            warning_count += 1
+        else:
+            info_count += 1
+
+        details += build_public_summary_detail(name, label, css)
+
+    value = f"{len(checks)} Checks · {ok_count} OK · {warning_count} WARNING · {bad_count} CRITICAL"
+
+    if info_count:
+        value += f" · {info_count} INFO"
+
+    return build_public_summary_card(
+        "Storage",
+        value,
+        details,
+        public_card_css(bad_count, warning_count, info_count),
+        "two-column" if len(checks) > 6 else "",
+    )
+
+
+def build_public_protection_summary_card(relationships, statuses):
+    if not relationships:
+        return build_public_summary_card(
+            "Protection",
+            "No protection relationships configured yet",
+            build_public_summary_detail("protection", "INFO", "info"),
+            "info",
+        )
+
+    configured_count = 0
+    incomplete_count = 0
+    bad_count = 0
+    info_count = 0
+    details = ""
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        name = relationship.get("name") or relationship_id
+        status = statuses.get(relationship_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+
+        if label == "CONFIGURED":
+            configured_count += 1
+        elif label == "INCOMPLETE" or css == "warning":
+            incomplete_count += 1
+        elif css == "bad":
+            bad_count += 1
+        else:
+            info_count += 1
+
+        details += build_public_summary_detail(name, label, css)
+
+    value = f"{len(relationships)} Relationships · {configured_count} CONFIGURED · {incomplete_count} INCOMPLETE"
+
+    if bad_count:
+        value += f" · {bad_count} BAD"
+    if info_count:
+        value += f" · {info_count} INFO"
+
+    return build_public_summary_card(
+        "Protection",
+        value,
+        details,
+        public_card_css(bad_count, incomplete_count, info_count),
+        "two-column" if len(relationships) > 6 else "",
+    )
+
+
+def build_public_services_summary_card(services, statuses):
+    if not services:
+        return build_public_summary_card(
+            "Services",
+            "No services configured yet",
+            build_public_summary_detail("services", "INFO", "info"),
+            "info",
+        )
+
+    summary = build_service_summary(services, statuses)
+
+    return build_public_summary_card(
+        "Services",
+        summary["value"],
+        summary["details"],
+        summary["css"],
+        summary["details_class"],
+    )
+
+
+def build_public_four_card_summary_preview(
+    hosts,
+    web_statuses,
+    local_storage_checks,
+    local_storage_statuses,
+    protection_relationships,
+    protection_statuses,
+    services,
+    service_statuses,
+    summary_cards,
+):
+    builders = {
+        "systems": lambda: build_public_systems_summary_card(hosts, web_statuses),
+        "storage": lambda: build_public_storage_summary_card(local_storage_checks, local_storage_statuses),
+        "protection": lambda: build_public_protection_summary_card(protection_relationships, protection_statuses),
+        "services": lambda: build_public_services_summary_card(services, service_statuses),
+    }
+
+    requested = [
+        str(card).strip().lower()
+        for card in summary_cards
+        if str(card).strip().lower() in builders
+    ]
+
+    if not requested:
+        requested = ["systems", "storage", "protection", "services"]
+
+    cards_html = "\n".join(builders[card]() for card in requested)
+
+    return f"""
+<div class="public-summary-preview">
+  <div class="public-summary-preview-header">
+    <div>
+      <div class="public-summary-kicker">Public Layout Preview</div>
+      <h2>Four-card summary direction</h2>
+    </div>
+    <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
+  </div>
+  <div class="public-summary-row">
+    {cards_html}
+  </div>
+</div>
+"""
+
+
 
 
 def h(value):
@@ -2912,6 +3166,18 @@ public_summary_preview_html = build_public_host_summary_preview(
     configured_host_web_statuses,
 )
 
+public_four_card_summary_preview_html = build_public_four_card_summary_preview(
+    CONFIG_HOSTS,
+    configured_host_web_statuses,
+    config_local_storage_checks,
+    config_local_storage_statuses,
+    config_protection_relationships,
+    config_protection_statuses,
+    public_summary_services,
+    public_summary_statuses,
+    CONFIG_SUMMARY_CARDS,
+)
+
 page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3827,6 +4093,8 @@ pre, .mono {{
     </div>
   </div>
 </div>
+
+{public_four_card_summary_preview_html}
 
 {public_summary_preview_html}
 
