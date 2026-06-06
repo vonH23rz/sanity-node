@@ -2140,7 +2140,6 @@ t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuse
 
 config_http_services = normalize_config_http_services(CONFIG_ENABLED_SERVICES)
 config_http_statuses = collect_http_services(config_http_services)
-config_http_service_summary = build_service_summary(config_http_services, config_http_statuses) if config_http_services else None
 
 for service in config_http_services:
     status = config_http_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
@@ -2203,18 +2202,6 @@ public_summary_preview_html = build_public_host_summary_preview(
     public_summary_services,
     config_http_statuses,
 )
-
-configured_services_card_html = ""
-if config_http_service_summary:
-    configured_services_card_html = f"""
-  <div class="summary-card {h(config_http_service_summary["css"])}">
-    <div class="title">Configured Services</div>
-    <div class="value">{h(config_http_service_summary["value"])}</div>
-    <div class="summary-details service-details {h(config_http_service_summary["details_class"])}">
-      {config_http_service_summary["details"]}
-    </div>
-  </div>
-"""
 
 page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3116,7 +3103,6 @@ pre, .mono {{
       {replication_detail_html}
     </div>
   </div>
-{configured_services_card_html}
   <div class="summary-card {h(t620_service_summary["css"])}">
     <div class="title">T620 Services</div>
     <div class="value">{h(t620_service_summary["value"])}</div>
