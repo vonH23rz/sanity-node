@@ -224,7 +224,8 @@ Current Phase 2 public-preview behavior:
 - configured Docker services on the collector node can report live container status
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
 - configured local storage checks can report collector-local filesystem usage using `df`
-- Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, and local storage checks for non-collector hosts are shown as `NOT CHECKED` for now
+- configured backup checks can report collector-local marker-file freshness and optional systemd timer state
+- Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 The future model separates:
