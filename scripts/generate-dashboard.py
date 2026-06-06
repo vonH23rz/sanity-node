@@ -814,15 +814,19 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
             host_card_css = "info"
 
         details = summary["details"]
+        summary_value = summary["value"]
+        details_class = summary["details_class"]
 
         if not details:
-            details = '<span class="service-line"><strong>No services configured yet</strong> <span class="info-text">INFO</span></span>'
+            summary_value = "No services configured yet"
+            details_class = ""
+            details = '<span class="service-line"><strong>Host Web UI only</strong> <span class="info-text">INFO</span></span>'
 
         cards_html += f"""
     <div class="summary-card {h(host_card_css)}">
       <div class="title">{h(title)} {badge(host_web_status.get("label", "UNKNOWN"), host_web_status.get("css", "info"))}</div>
-      <div class="value">{h(summary["value"])}</div>
-      <div class="summary-details service-details {h(summary["details_class"])}">
+      <div class="value">{h(summary_value)}</div>
+      <div class="summary-details service-details {h(details_class)}">
         {details}
       </div>
     </div>
