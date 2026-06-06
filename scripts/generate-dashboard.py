@@ -1724,6 +1724,13 @@ for system_name in system_info_order:
 
 pool_rows = ""
 pool_rows_by_host = {host_name: "" for host_name in HOSTS}
+storage_pool_total = 0
+storage_pool_status_counts = {
+    "OK": 0,
+    "INFO": 0,
+    "WARNING": 0,
+    "BAD": 0,
+}
 
 for host_name, host_info in HOSTS.items():
     ip = host_info["ip"]
@@ -1785,6 +1792,17 @@ for host_name, host_info in HOSTS.items():
             row_css = "info"
         else:
             row_css = "ok"
+
+        storage_pool_total += 1
+
+        if row_css == "bad":
+            storage_pool_status_counts["BAD"] += 1
+        elif row_css == "warning":
+            storage_pool_status_counts["WARNING"] += 1
+        elif row_css == "info":
+            storage_pool_status_counts["INFO"] += 1
+        else:
+            storage_pool_status_counts["OK"] += 1
 
         pool_rows += f"""
 <tr class="{row_css}">
@@ -2083,6 +2101,32 @@ if collection_errors:
 </section>
 """
 
+storage_summary_css = (
+    "bad" if storage_pool_status_counts["BAD"]
+    else "warning" if storage_pool_status_counts["WARNING"]
+    else "info" if storage_pool_status_counts["INFO"]
+    else ""
+)
+
+storage_summary_value = f"{storage_pool_total} Pools · {storage_pool_status_counts['OK']} OK"
+if storage_pool_status_counts["INFO"]:
+    storage_summary_value += f" · {storage_pool_status_counts['INFO']} Info"
+if storage_pool_status_counts["WARNING"]:
+    storage_summary_value += f" · {storage_pool_status_counts['WARNING']} Warning"
+if storage_pool_status_counts["BAD"]:
+    storage_summary_value += f" · {storage_pool_status_counts['BAD']} Bad"
+
+protection_info_count = t330_snapshot_status_counts["INFO"] + snapshot_status_counts["INFO"]
+protection_warning_count = t330_snapshot_status_counts["WARNING"] + snapshot_status_counts["WARNING"]
+protection_bad_count = t330_snapshot_status_counts["BAD"] + snapshot_status_counts["BAD"]
+
+protection_summary_css = (
+    "bad" if protection_bad_count
+    else "warning" if protection_warning_count
+    else "info" if protection_info_count
+    else ""
+)
+
 public_summary_preview_html = f"""
 <div class="public-summary-preview">
   <div class="public-summary-preview-header">
@@ -2100,19 +2144,19 @@ public_summary_preview_html = f"""
         <span>Configured host inventory loaded from config.yaml</span>
       </div>
     </div>
-    <div class="summary-card {'info' if t330_snapshot_status_counts["INFO"] or snapshot_status_counts["INFO"] else 'warning' if t330_snapshot_status_counts["WARNING"] or snapshot_status_counts["WARNING"] else 'bad' if t330_snapshot_status_counts["BAD"] or snapshot_status_counts["BAD"] else ''}">
+    <div class="summary-card {h(storage_summary_css)}">
       <div class="title">Storage</div>
-      <div class="value">{h(t330_snapshot_status_counts["OK"] + snapshot_status_counts["OK"])} Snapshot OK</div>
+      <div class="value">{h(storage_summary_value)}</div>
       <div class="summary-details">
-        <span>T330: {h(enabled_t330_snapshot_tasks)} enabled</span>
-        <span>T620: {h(enabled_snapshot_tasks)} enabled</span>
+        <span>Pool health, SMART, and temperature summary</span>
       </div>
     </div>
-    <div class="summary-card">
+    <div class="summary-card {h(protection_summary_css)}">
       <div class="title">Protection</div>
-      <div class="value">{h(finished_replications)} Finished · {h(len(t330_reps))} To T330</div>
+      <div class="value">{h(enabled_t330_snapshot_tasks + enabled_snapshot_tasks)} Snapshot Tasks · {h(finished_replications)}/{h(len(t330_reps))} Repl Finished</div>
       <div class="summary-details">
-        <span>Snapshot / replication relationship preview</span>
+        <span>Snapshots OK: {h(t330_snapshot_status_counts["OK"] + snapshot_status_counts["OK"])}</span>
+        <span>Replication relationships: {h(len(t330_reps))}</span>
       </div>
     </div>
     <div class="summary-card {h(t620_service_summary["css"] or beckhoff_service_summary["css"])}">
