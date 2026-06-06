@@ -313,6 +313,37 @@ def collect_http_services(services):
 
 
 
+def build_config_summary_statuses(services, http_statuses):
+    # Preview-only: HTTP checks are live today; Docker and TrueNAS app checks are
+    # documented future/config-driven paths. Show them as intentionally not
+    # checked instead of letting summary cards fall back to UNKNOWN.
+    statuses = dict(http_statuses)
+
+    for service in services:
+        service_id = service["id"]
+
+        if service_id in statuses:
+            continue
+
+        check_type = service.get("check") or "none"
+
+        if check_type == "http":
+            statuses[service_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "HTTP service was not checked",
+            }
+        else:
+            statuses[service_id] = {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": f"{check_type} checks are not active in the public preview yet",
+            }
+
+    return statuses
+
+
+
 def collect_truenas_app_services(ip, services):
     statuses = {}
 
@@ -1099,7 +1130,7 @@ def temp_badge(label, css):
 def status_text_class(label):
     if label in ("OK", "FINISHED", "SUCCESS", "YES", "ONLINE", "UP"):
         return "ok-text"
-    if label in ("INFO", "PENDING", "RUNNING", "UNKNOWN"):
+    if label in ("INFO", "PENDING", "RUNNING", "UNKNOWN", "NOT CHECKED"):
         return "info-text"
     if label in ("WARNING", "OLD", "DIFFERENT"):
         return "warning-text"
@@ -2222,10 +2253,11 @@ if collection_errors:
 """
 
 public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
+public_summary_statuses = build_config_summary_statuses(public_summary_services, config_http_statuses)
 public_summary_preview_html = build_public_host_summary_preview(
     CONFIG_HOSTS,
     public_summary_services,
-    config_http_statuses,
+    public_summary_statuses,
     configured_host_web_statuses,
 )
 
