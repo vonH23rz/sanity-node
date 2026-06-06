@@ -578,6 +578,57 @@ def build_service_summary(services, statuses):
     }
 
 
+
+def build_configured_hosts_preview(hosts):
+    if not hosts:
+        return ""
+
+    rows = ""
+
+    for host in hosts:
+        if not isinstance(host, dict):
+            continue
+
+        enabled = bool(host.get("enabled", True))
+        label = "ENABLED" if enabled else "DISABLED"
+        css = "ok" if enabled else "info"
+
+        display_name = host.get("display_name") or host.get("hostname") or host.get("id") or "-"
+        host_type = host.get("type", "-")
+        address = host.get("address", "-")
+        host_id = host.get("id", "-")
+
+        rows += f"""
+      <tr>
+        <td>{badge(label, css)}</td>
+        <td>{h(display_name)}</td>
+        <td>{h(host_id)}</td>
+        <td>{h(host_type)}</td>
+        <td><span class="mono">{h(address)}</span></td>
+      </tr>
+"""
+
+    if not rows:
+        return ""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <h3>Configured Hosts</h3>
+    <p class="muted-small">Preview from config.yaml. Host checks are not config-driven yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Name</th>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Address</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+"""
+
+
 def h(value):
     return html.escape(str(value))
 
@@ -1792,6 +1843,9 @@ for system_name in system_info_order:
 
 
 
+configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS)
+
+
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
 snapshot_detail_html = ""
@@ -2721,6 +2775,7 @@ pre, .mono {{
   <div class="systems-list">
     {systems_layout_html}
   </div>
+  {configured_hosts_preview_html}
 </section>
 
 {errors_section}
