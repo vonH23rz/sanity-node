@@ -239,7 +239,14 @@ services:
 # =============================================================================
 # Local storage checks
 # =============================================================================
-# 🩵 Optional: monitor selected local filesystems on Linux hosts.
+# 🩵 Optional: monitor selected local filesystems.
+#
+# Current public-preview behavior:
+# - collector-local checks are active and use df
+# - checks for other hosts are shown as NOT CHECKED for now
+# - warning_percent defaults to 80 if omitted
+# - critical_percent defaults to 90 if omitted
+#
 # Enable only mountpoints that actually exist on the selected host.
 
 local_storage:
@@ -247,11 +254,15 @@ local_storage:
     host: collector
     mount: /
     label: System Disk
+    warning_percent: 80
+    critical_percent: 90
 
   - enabled: false
     host: collector
     mount: /mnt/storage
     label: Storage Disk
+    warning_percent: 80
+    critical_percent: 90
 
 
 # =============================================================================
