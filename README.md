@@ -222,7 +222,8 @@ Current Phase 2 public-preview behavior:
 - host Web UI links can show preview reachability badges
 - configured HTTP services can report live `UP` / `DOWN`
 - configured Docker services on the collector node can report live container status
-- Docker checks for other hosts and future check engines such as `truenas_app` are shown as `NOT CHECKED` until their config-driven collectors are implemented
+- configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
+- Docker checks for other hosts and TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 The future model separates:
