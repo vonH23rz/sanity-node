@@ -579,10 +579,80 @@ def build_service_summary(services, statuses):
 
 
 
-def build_configured_hosts_preview(hosts):
+
+def configured_host_key(host):
+    return str(host.get("id") or host.get("display_name") or host.get("hostname") or host.get("address") or "")
+
+
+def collect_configured_host_web_statuses(hosts):
+    statuses = {}
+
+    for host in hosts:
+        if not isinstance(host, dict):
+            continue
+
+        host_key = configured_host_key(host)
+
+        if not host_key:
+            continue
+
+        if not bool(host.get("enabled", True)):
+            statuses[host_key] = {"label": "DISABLED", "css": "info", "raw": "host disabled"}
+            continue
+
+        web_url = host.get("web_url")
+
+        if not web_url:
+            statuses[host_key] = {"label": "NO URL", "css": "info", "raw": "missing web_url"}
+            continue
+
+        try:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-k",
+                    "-L",
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "--connect-timeout",
+                    "5",
+                    "--max-time",
+                    "10",
+                    "-w",
+                    "%{http_code}",
+                    str(web_url),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            http_code = (result.stdout + result.stderr).strip()
+            ok = (
+                result.returncode == 0
+                and http_code.isdigit()
+                and int(http_code) != 0
+                and int(http_code) < 500
+            )
+
+            if ok:
+                statuses[host_key] = {"label": "OK", "css": "ok", "raw": f"HTTP {http_code}"}
+            else:
+                raw = f"HTTP {http_code}" if http_code else "HTTP check failed"
+                statuses[host_key] = {"label": "DOWN", "css": "bad", "raw": raw}
+
+        except Exception as e:
+            statuses[host_key] = {"label": "DOWN", "css": "bad", "raw": str(e)}
+
+    return statuses
+
+
+def build_configured_hosts_preview(hosts, web_statuses=None):
     if not hosts:
         return ""
 
+    web_statuses = web_statuses or {}
     rows = ""
 
     sorted_hosts = sorted(
@@ -594,6 +664,7 @@ def build_configured_hosts_preview(hosts):
     )
 
     for host in sorted_hosts:
+        host_key = configured_host_key(host)
         enabled = bool(host.get("enabled", True))
         label = "ENABLED" if enabled else "DISABLED"
         css = "ok" if enabled else "info"
@@ -603,6 +674,10 @@ def build_configured_hosts_preview(hosts):
         address = host.get("address", "-")
         host_id = host.get("id", "-")
         web_url = host.get("web_url")
+
+        web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        web_label = web_status.get("label", "UNKNOWN")
+        web_css = web_status.get("css", "info")
 
         if web_url:
             name_html = f'<a class="host-link" href="{h(web_url)}" target="_blank" rel="noopener noreferrer">{h(display_name)}</a>'
@@ -616,6 +691,7 @@ def build_configured_hosts_preview(hosts):
         <td>{h(host_id)}</td>
         <td>{h(host_type)}</td>
         <td><span class="mono">{h(address)}</span></td>
+        <td>{badge(web_label, web_css)}</td>
       </tr>
 """
 
@@ -625,7 +701,7 @@ def build_configured_hosts_preview(hosts):
     return f"""
   <div class="configured-hosts-preview">
     <h3>Configured Hosts</h3>
-    <p class="muted-small">Preview from config.yaml. Host checks are not config-driven yet.</p>
+    <p class="muted-small">Preview from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.</p>
     <table>
       <tr>
         <th>Status</th>
@@ -633,6 +709,7 @@ def build_configured_hosts_preview(hosts):
         <th>ID</th>
         <th>Type</th>
         <th>Address</th>
+        <th>Web UI</th>
       </tr>
       {rows}
     </table>
@@ -1854,7 +1931,8 @@ for system_name in system_info_order:
 
 
 
-configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS)
+configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
+configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
 
 
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
