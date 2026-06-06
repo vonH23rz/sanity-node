@@ -776,11 +776,12 @@ def configured_host_sort_key(host):
     return (group, configured_host_display_name(host).lower())
 
 
-def build_public_host_summary_preview(hosts, services, statuses):
+def build_public_host_summary_preview(hosts, services, statuses, web_statuses=None):
     # This is intentionally preview-only while the existing reference summary row
     # remains active. The four-column CSS is a layout maximum, not a fixed number
     # of required cards: two configured hosts should render two summary cards.
     enabled_hosts = enabled_items(hosts)
+    web_statuses = web_statuses or {}
 
     if not enabled_hosts:
         return ""
@@ -800,6 +801,8 @@ def build_public_host_summary_preview(hosts, services, statuses):
     for host in sorted_hosts:
         host_id = str(host.get("id") or "")
         title = configured_host_display_name(host)
+        host_key = configured_host_key(host)
+        host_web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
         host_services = services_by_host.get(host_id, [])
         summary = build_service_summary(host_services, statuses)
         details = summary["details"]
@@ -809,7 +812,7 @@ def build_public_host_summary_preview(hosts, services, statuses):
 
         cards_html += f"""
     <div class="summary-card {h(summary["css"])}">
-      <div class="title">{h(title)}</div>
+      <div class="title">{h(title)} {badge(host_web_status.get("label", "UNKNOWN"), host_web_status.get("css", "info"))}</div>
       <div class="value">{h(summary["value"])}</div>
       <div class="summary-details service-details {h(summary["details_class"])}">
         {details}
@@ -2211,6 +2214,7 @@ public_summary_preview_html = build_public_host_summary_preview(
     CONFIG_HOSTS,
     public_summary_services,
     config_http_statuses,
+    configured_host_web_statuses,
 )
 
 page = f"""<!DOCTYPE html>
