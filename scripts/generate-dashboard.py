@@ -747,6 +747,11 @@ def configured_host_display_name(host):
 
 
 def configured_host_sort_key(host):
+    # Public summary cards are host/system based, not category based.
+    # Preferred order:
+    #   1. collector / Utility Node
+    #   2. TrueNAS systems
+    #   3. any additional enabled configured hosts
     host_id = str(host.get("id") or "").lower()
     host_type = str(host.get("type") or "").lower()
     collector_id = str(cfg_get(("collector", "id"), "collector")).lower()
@@ -762,6 +767,9 @@ def configured_host_sort_key(host):
 
 
 def build_public_host_summary_preview(hosts, services, statuses):
+    # This is intentionally preview-only while the existing reference summary row
+    # remains active. The four-column CSS is a layout maximum, not a fixed number
+    # of required cards: two configured hosts should render two summary cards.
     enabled_hosts = enabled_items(hosts)
 
     if not enabled_hosts:
