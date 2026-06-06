@@ -2083,6 +2083,50 @@ if collection_errors:
 </section>
 """
 
+public_summary_preview_html = f"""
+<div class="public-summary-preview">
+  <div class="public-summary-preview-header">
+    <div>
+      <div class="public-summary-kicker">Public Layout Preview</div>
+      <h2>Four-card summary direction</h2>
+    </div>
+    <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
+  </div>
+  <div class="public-summary-row">
+    <div class="summary-card">
+      <div class="title">Systems</div>
+      <div class="value">{h(len(CONFIG_ENABLED_HOSTS))} Enabled · {h(len(CONFIG_HOSTS))} Configured</div>
+      <div class="summary-details">
+        <span>Configured host inventory loaded from config.yaml</span>
+      </div>
+    </div>
+    <div class="summary-card {'info' if t330_snapshot_status_counts["INFO"] or snapshot_status_counts["INFO"] else 'warning' if t330_snapshot_status_counts["WARNING"] or snapshot_status_counts["WARNING"] else 'bad' if t330_snapshot_status_counts["BAD"] or snapshot_status_counts["BAD"] else ''}">
+      <div class="title">Storage</div>
+      <div class="value">{h(t330_snapshot_status_counts["OK"] + snapshot_status_counts["OK"])} Snapshot OK</div>
+      <div class="summary-details">
+        <span>T330: {h(enabled_t330_snapshot_tasks)} enabled</span>
+        <span>T620: {h(enabled_snapshot_tasks)} enabled</span>
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="title">Protection</div>
+      <div class="value">{h(finished_replications)} Finished · {h(len(t330_reps))} To T330</div>
+      <div class="summary-details">
+        <span>Snapshot / replication relationship preview</span>
+      </div>
+    </div>
+    <div class="summary-card {h(t620_service_summary["css"] or beckhoff_service_summary["css"])}">
+      <div class="title">Services / Updates</div>
+      <div class="value">T620 {h(t620_service_summary["up"])} UP · Utility {h(beckhoff_service_summary["up"])} UP</div>
+      <div class="summary-details">
+        <span>Image Updates: none</span>
+        <span>Configured HTTP services: {h(len(config_http_services))}</span>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
 configured_services_card_html = ""
 if config_http_service_summary:
     configured_services_card_html = f"""
@@ -2340,6 +2384,75 @@ pre, .mono {{
 .overall-status.stale {{
   border-left-color: #ff453a;
   background: var(--panel);
+}}
+
+
+.public-summary-preview {{
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  margin: -2px 0 16px;
+  padding: 14px;
+}}
+
+.public-summary-preview-header {{
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}}
+
+.public-summary-kicker {{
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+
+.public-summary-preview h2 {{
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 2px 0 0;
+}}
+
+.public-summary-note {{
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
+}}
+
+.public-summary-row {{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}}
+
+.public-summary-row .summary-card {{
+  box-shadow: none;
+}}
+
+@media (max-width: 1200px) {{
+  .public-summary-row {{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }}
+}}
+
+@media (max-width: 900px) {{
+  .public-summary-preview-header {{
+    flex-direction: column;
+  }}
+
+  .public-summary-row {{
+    grid-template-columns: 1fr;
+  }}
 }}
 
 .summary-row {{
@@ -2942,6 +3055,8 @@ pre, .mono {{
     </div>
   </div>
 </div>
+
+{public_summary_preview_html}
 
 <section>
   <h2>1. Systems</h2>
