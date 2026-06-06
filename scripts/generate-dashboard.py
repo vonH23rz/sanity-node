@@ -1702,23 +1702,29 @@ def build_public_four_card_summary_preview(
         "services": lambda: build_public_services_summary_card(services, service_statuses),
     }
 
-    requested = [
-        str(card).strip().lower()
-        for card in summary_cards
-        if str(card).strip().lower() in builders
-    ]
+    requested = []
+    seen = set()
+
+    for card in summary_cards:
+        card_name = str(card).strip().lower()
+
+        if card_name in builders and card_name not in seen:
+            requested.append(card_name)
+            seen.add(card_name)
 
     if not requested:
         requested = ["systems", "storage", "protection", "services"]
 
     cards_html = "\n".join(builders[card]() for card in requested)
+    active_cards = " · ".join(card.title() for card in requested)
 
     return f"""
 <div class="public-summary-preview">
   <div class="public-summary-preview-header">
     <div>
-      <div class="public-summary-kicker">Public Layout Preview</div>
-      <h2>Four-card summary direction</h2>
+      <div class="public-summary-kicker">Public Four-Card Preview</div>
+      <h2>Configurable public summary cards</h2>
+      <div class="public-summary-selected">Active cards: {h(active_cards)}</div>
     </div>
     <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
   </div>
@@ -3455,6 +3461,13 @@ pre, .mono {{
   font-size: 17px;
   line-height: 1.2;
   margin: 2px 0 0;
+}}
+
+.public-summary-selected {{
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 4px;
 }}
 
 .public-summary-note {{
