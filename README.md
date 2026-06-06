@@ -34,7 +34,8 @@ The public direction is now defined:
 - optional local, Docker, HTTP, backup, replication, and update checks
 - a self-documenting `config.yaml`
 - a future Docker Compose install flow on port `8099`
-- four global dashboard summary cards:
+- host-based public summary preview cards generated from configured hosts
+- a later four-card public summary model:
   - Systems
   - Storage
   - Protection
@@ -215,6 +216,14 @@ That file is intentionally self-documenting. It uses:
 
 The goal is that users should be able to describe their own homelab without editing the Python code.
 
+Current Phase 2 public-preview behavior:
+
+- configured hosts can appear as host-based summary cards
+- host Web UI links can show preview reachability badges
+- configured HTTP services can report live `UP` / `DOWN`
+- future check engines such as `docker` and `truenas_app` are shown as `NOT CHECKED` until their config-driven collectors are implemented
+- the original hardcoded five-card reference summary remains untouched while this preview path is developed
+
 The future model separates:
 
 ```text
@@ -278,7 +287,7 @@ Planned improvements:
 - `.env.example`
 - Dockerfile
 - safer first-run checks
-- public-preview layout with four global summary cards
+- public-preview layout moving from host-based cards toward four global summary cards
 - cleaner separation between personal deployment and public template
 
 ---
