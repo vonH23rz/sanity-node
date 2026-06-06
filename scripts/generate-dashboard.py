@@ -805,13 +805,21 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
         host_web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
         host_services = services_by_host.get(host_id, [])
         summary = build_service_summary(host_services, statuses)
+        host_web_css = host_web_status.get("css", "info")
+        host_card_css = summary["css"]
+
+        if host_web_css == "bad":
+            host_card_css = "bad"
+        elif host_web_css == "info" and not host_card_css:
+            host_card_css = "info"
+
         details = summary["details"]
 
         if not details:
             details = '<span class="service-line"><strong>No services configured yet</strong> <span class="info-text">INFO</span></span>'
 
         cards_html += f"""
-    <div class="summary-card {h(summary["css"])}">
+    <div class="summary-card {h(host_card_css)}">
       <div class="title">{h(title)} {badge(host_web_status.get("label", "UNKNOWN"), host_web_status.get("css", "info"))}</div>
       <div class="value">{h(summary["value"])}</div>
       <div class="summary-details service-details {h(summary["details_class"])}">
