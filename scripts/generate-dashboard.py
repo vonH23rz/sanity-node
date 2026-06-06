@@ -205,34 +205,48 @@ def collect_local_docker_services(services):
     return statuses, errors
 
 
-def normalize_config_http_services(services):
+def config_service_safe_name(name):
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name).lower()).strip("-")
+
+
+def normalize_config_service(service, index):
+    if not isinstance(service, dict):
+        return None
+
+    name = service.get("name") or service.get("id") or f"Service {index}"
+    safe_name = config_service_safe_name(name)
+    service_id = service.get("id") or f"config-service-{index}-{safe_name or 'service'}"
+
+    service_type = service.get("type", "app")
+    if service_type not in ("app", "helper"):
+        service_type = "app"
+
+    return {
+        "id": str(service_id),
+        "display": str(name),
+        "type": service_type,
+        "url": service.get("url"),
+        "host": service.get("host"),
+        "check": service.get("check"),
+    }
+
+
+def normalize_config_services_for_summary(services):
     normalized = []
 
     for index, service in enumerate(services, start=1):
-        if not isinstance(service, dict):
-            continue
-
-        if service.get("check") != "http":
-            continue
-
-        name = service.get("name") or service.get("id") or f"Service {index}"
-        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name).lower()).strip("-")
-        service_id = service.get("id") or f"config-http-{index}-{safe_name or 'service'}"
-
-        service_type = service.get("type", "app")
-        if service_type not in ("app", "helper"):
-            service_type = "app"
-
-        normalized.append({
-            "id": str(service_id),
-            "display": str(name),
-            "type": service_type,
-            "url": service.get("url"),
-            "host": service.get("host"),
-            "check": "http",
-        })
+        normalized_service = normalize_config_service(service, index)
+        if normalized_service:
+            normalized.append(normalized_service)
 
     return normalized
+
+
+def normalize_config_http_services(services):
+    return [
+        service for service in normalize_config_services_for_summary(services)
+        if service.get("check") == "http"
+    ]
 
 
 def collect_http_services(services):
@@ -724,6 +738,80 @@ def build_configured_hosts_preview(hosts, web_statuses=None):
       {rows}
     </table>
   </div>
+"""
+
+
+
+def configured_host_display_name(host):
+    return str(host.get("display_name") or host.get("hostname") or host.get("id") or "Configured Host")
+
+
+def configured_host_sort_key(host):
+    host_id = str(host.get("id") or "").lower()
+    host_type = str(host.get("type") or "").lower()
+    collector_id = str(cfg_get(("collector", "id"), "collector")).lower()
+
+    if host_id == collector_id or host_id == "collector":
+        group = 0
+    elif host_type == "truenas":
+        group = 1
+    else:
+        group = 2
+
+    return (group, configured_host_display_name(host).lower())
+
+
+def build_public_host_summary_preview(hosts, services, statuses):
+    enabled_hosts = enabled_items(hosts)
+
+    if not enabled_hosts:
+        return ""
+
+    sorted_hosts = sorted(enabled_hosts, key=configured_host_sort_key)
+    services_by_host = {}
+
+    for service in services:
+        host_id = service.get("host")
+        if not host_id:
+            continue
+
+        services_by_host.setdefault(str(host_id), []).append(service)
+
+    cards_html = ""
+
+    for host in sorted_hosts:
+        host_id = str(host.get("id") or "")
+        title = configured_host_display_name(host)
+        host_services = services_by_host.get(host_id, [])
+        summary = build_service_summary(host_services, statuses)
+        details = summary["details"]
+
+        if not details:
+            details = '<span class="service-line"><strong>No services configured yet</strong> <span class="info-text">INFO</span></span>'
+
+        cards_html += f"""
+    <div class="summary-card {h(summary["css"])}">
+      <div class="title">{h(title)}</div>
+      <div class="value">{h(summary["value"])}</div>
+      <div class="summary-details service-details {h(summary["details_class"])}">
+        {details}
+      </div>
+    </div>
+"""
+
+    return f"""
+<div class="public-summary-preview">
+  <div class="public-summary-preview-header">
+    <div>
+      <div class="public-summary-kicker">Public Layout Preview</div>
+      <h2>Host-based summary direction</h2>
+    </div>
+    <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
+  </div>
+  <div class="public-summary-row">
+    {cards_html}
+  </div>
+</div>
 """
 
 
@@ -2101,75 +2189,12 @@ if collection_errors:
 </section>
 """
 
-storage_summary_css = (
-    "bad" if storage_pool_status_counts["BAD"]
-    else "warning" if storage_pool_status_counts["WARNING"]
-    else "info" if storage_pool_status_counts["INFO"]
-    else ""
+public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
+public_summary_preview_html = build_public_host_summary_preview(
+    CONFIG_HOSTS,
+    public_summary_services,
+    config_http_statuses,
 )
-
-storage_summary_value = f"{storage_pool_total} Pools · {storage_pool_status_counts['OK']} OK"
-if storage_pool_status_counts["INFO"]:
-    storage_summary_value += f" · {storage_pool_status_counts['INFO']} Info"
-if storage_pool_status_counts["WARNING"]:
-    storage_summary_value += f" · {storage_pool_status_counts['WARNING']} Warning"
-if storage_pool_status_counts["BAD"]:
-    storage_summary_value += f" · {storage_pool_status_counts['BAD']} Bad"
-
-protection_info_count = t330_snapshot_status_counts["INFO"] + snapshot_status_counts["INFO"]
-protection_warning_count = t330_snapshot_status_counts["WARNING"] + snapshot_status_counts["WARNING"]
-protection_bad_count = t330_snapshot_status_counts["BAD"] + snapshot_status_counts["BAD"]
-
-protection_summary_css = (
-    "bad" if protection_bad_count
-    else "warning" if protection_warning_count
-    else "info" if protection_info_count
-    else ""
-)
-
-public_summary_preview_html = f"""
-<div class="public-summary-preview">
-  <div class="public-summary-preview-header">
-    <div>
-      <div class="public-summary-kicker">Public Layout Preview</div>
-      <h2>Four-card summary direction</h2>
-    </div>
-    <div class="public-summary-note">Preview only · existing summary cards unchanged</div>
-  </div>
-  <div class="public-summary-row">
-    <div class="summary-card">
-      <div class="title">Systems</div>
-      <div class="value">{h(len(CONFIG_ENABLED_HOSTS))} Enabled · {h(len(CONFIG_HOSTS))} Configured</div>
-      <div class="summary-details">
-        <span>Configured host inventory loaded from config.yaml</span>
-      </div>
-    </div>
-    <div class="summary-card {h(storage_summary_css)}">
-      <div class="title">Storage</div>
-      <div class="value">{h(storage_summary_value)}</div>
-      <div class="summary-details">
-        <span>Pool health, SMART, and temperature summary</span>
-      </div>
-    </div>
-    <div class="summary-card {h(protection_summary_css)}">
-      <div class="title">Protection</div>
-      <div class="value">{h(enabled_t330_snapshot_tasks + enabled_snapshot_tasks)} Snapshot Tasks · {h(finished_replications)}/{h(len(t330_reps))} Repl Finished</div>
-      <div class="summary-details">
-        <span>Snapshots OK: {h(t330_snapshot_status_counts["OK"] + snapshot_status_counts["OK"])}</span>
-        <span>Replication relationships: {h(len(t330_reps))}</span>
-      </div>
-    </div>
-    <div class="summary-card {h(t620_service_summary["css"] or beckhoff_service_summary["css"])}">
-      <div class="title">Services / Updates</div>
-      <div class="value">T620 {h(t620_service_summary["up"])} UP · Utility {h(beckhoff_service_summary["up"])} UP</div>
-      <div class="summary-details">
-        <span>Image Updates: none</span>
-        <span>Configured HTTP services: {h(len(config_http_services))}</span>
-      </div>
-    </div>
-  </div>
-</div>
-"""
 
 configured_services_card_html = ""
 if config_http_service_summary:
