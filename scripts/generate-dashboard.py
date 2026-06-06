@@ -85,11 +85,15 @@ CONFIG_ENABLED_SERVICES = enabled_items(CONFIG_SERVICES)
 CONFIG_PROTECTION = cfg_list(("protection",))
 CONFIG_ENABLED_PROTECTION = enabled_items(CONFIG_PROTECTION)
 
+CONFIG_LOCAL_STORAGE = cfg_list(("local_storage",))
+CONFIG_ENABLED_LOCAL_STORAGE = enabled_items(CONFIG_LOCAL_STORAGE)
+
 print(
     "Loaded config inventory: "
     f"{len(CONFIG_ENABLED_HOSTS)}/{len(CONFIG_HOSTS)} hosts enabled, "
     f"{len(CONFIG_ENABLED_SERVICES)}/{len(CONFIG_SERVICES)} services enabled, "
-    f"{len(CONFIG_ENABLED_PROTECTION)}/{len(CONFIG_PROTECTION)} protection relationships enabled"
+    f"{len(CONFIG_ENABLED_PROTECTION)}/{len(CONFIG_PROTECTION)} protection relationships enabled, "
+    f"{len(CONFIG_ENABLED_LOCAL_STORAGE)}/{len(CONFIG_LOCAL_STORAGE)} local storage checks enabled"
 )
 
 
@@ -748,6 +752,165 @@ def build_service_summary(services, statuses):
         "down": down_count,
         "info": info_count,
     }
+
+
+
+
+def config_percent(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_config_local_storage_checks(checks):
+    normalized = []
+
+    for index, check in enumerate(checks, start=1):
+        if not isinstance(check, dict):
+            continue
+
+        mount = check.get("mount")
+        if not mount:
+            continue
+
+        label = check.get("label") or mount
+        check_id = check.get("id") or f"config-local-storage-{index}-{config_service_safe_name(label)}"
+
+        normalized.append({
+            "id": str(check_id),
+            "host": check.get("host"),
+            "mount": str(mount),
+            "label": str(label),
+            "warning_percent": config_percent(check.get("warning_percent"), 80),
+            "critical_percent": config_percent(check.get("critical_percent"), 90),
+        })
+
+    return normalized
+
+
+def collect_config_local_storage_checks(checks):
+    statuses = {}
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+
+    for check in checks:
+        check_id = check["id"]
+        host_id = str(check.get("host") or "")
+        mount = check["mount"]
+
+        if host_id not in (collector_id, "collector"):
+            statuses[check_id] = {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "local storage checks are active for the collector node only",
+            }
+            continue
+
+        try:
+            result = subprocess.run(
+                ["df", "-P", mount],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as e:
+            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": str(e)}
+            continue
+
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).strip()
+            statuses[check_id] = {"label": "MISSING", "css": "bad", "raw": output}
+            continue
+
+        lines = result.stdout.strip().splitlines()
+        if len(lines) < 2:
+            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": "unexpected df output"}
+            continue
+
+        parts = lines[1].split()
+        if len(parts) < 5:
+            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": lines[1]}
+            continue
+
+        size = parts[1]
+        used = parts[2]
+        available = parts[3]
+        percent_raw = parts[4].rstrip("%")
+
+        try:
+            used_percent = int(percent_raw)
+        except ValueError:
+            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": lines[1]}
+            continue
+
+        if used_percent >= check["critical_percent"]:
+            label = "CRITICAL"
+            css = "bad"
+        elif used_percent >= check["warning_percent"]:
+            label = "WARNING"
+            css = "warning"
+        else:
+            label = "OK"
+            css = "ok"
+
+        statuses[check_id] = {
+            "label": label,
+            "css": css,
+            "raw": f"{used_percent}% used · {used} used · {available} available · {size} total",
+            "used_percent": used_percent,
+            "used": used,
+            "available": available,
+            "size": size,
+        }
+
+    return statuses
+
+
+def build_config_local_storage_preview(checks, statuses):
+    if not checks:
+        return ""
+
+    rows = ""
+
+    for check in checks:
+        check_id = check["id"]
+        status = statuses.get(check_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+        raw = status.get("raw", "-")
+
+        rows += f"""
+      <tr class="{h(css)}">
+        <td>{badge(label, css)}</td>
+        <td>{h(check.get("label", "-"))}</td>
+        <td><span class="mono">{h(check.get("host", "-"))}</span></td>
+        <td><span class="mono">{h(check.get("mount", "-"))}</span></td>
+        <td>{h(raw)}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Local Storage</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(len(checks))} checks</div>
+    </div>
+    <p class="muted-small">Collector-local df checks are active. Local storage checks for other hosts are shown as NOT CHECKED for now.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Label</th>
+        <th>Host</th>
+        <th>Mount</th>
+        <th>Result</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+"""
 
 
 
@@ -2231,6 +2394,13 @@ for system_name in system_info_order:
 configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
 configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
 
+config_local_storage_checks = normalize_config_local_storage_checks(CONFIG_ENABLED_LOCAL_STORAGE)
+config_local_storage_statuses = collect_config_local_storage_checks(config_local_storage_checks)
+config_local_storage_preview_html = build_config_local_storage_preview(
+    config_local_storage_checks,
+    config_local_storage_statuses,
+)
+
 
 enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
@@ -3334,6 +3504,8 @@ pre, .mono {{
     {systems_layout_html}
   </div>
   {configured_hosts_preview_html}
+
+  {config_local_storage_preview_html}
 </section>
 
 {errors_section}
