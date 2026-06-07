@@ -91,6 +91,11 @@ CONFIG_ENABLED_LOCAL_STORAGE = enabled_items(CONFIG_LOCAL_STORAGE)
 CONFIG_BACKUP_CHECKS = cfg_list(("backup_checks",))
 CONFIG_ENABLED_BACKUP_CHECKS = enabled_items(CONFIG_BACKUP_CHECKS)
 
+CONFIG_IMAGE_UPDATES = cfg_get(("image_updates",), {})
+
+if not isinstance(CONFIG_IMAGE_UPDATES, dict):
+    CONFIG_IMAGE_UPDATES = {}
+
 CONFIG_SUMMARY_CARDS = cfg_list(("summary_cards",), ["systems", "storage", "protection", "services"])
 
 print(
@@ -1832,6 +1837,402 @@ def build_config_truenas_replication_preview(rows):
         <th>Task / State</th>
         <th>Last Execution</th>
         <th>Last Snapshot</th>
+        <th>Result</th>
+      </tr>
+      {table_rows}
+    </table>
+  </div>
+"""
+
+
+def normalize_config_image_update_sources(settings, hosts):
+    if not isinstance(settings, dict):
+        return []
+
+    if settings.get("enabled", True) is not True:
+        return []
+
+    enabled_hosts = {
+        str(host.get("id") or ""): host
+        for host in enabled_items(hosts)
+        if isinstance(host, dict) and host.get("id")
+    }
+
+    raw_sources = settings.get("sources") or []
+
+    if not isinstance(raw_sources, list):
+        return []
+
+    normalized = []
+
+    for index, source in enumerate(raw_sources, start=1):
+        if not isinstance(source, dict):
+            continue
+
+        host_id = str(source.get("host") or "")
+        provider = str(source.get("provider") or "").lower()
+        host = enabled_hosts.get(host_id)
+
+        if not host or provider not in ("diun", "truenas"):
+            continue
+
+        normalized.append({
+            "id": str(
+                source.get("id")
+                or f"image-update-{index}-{host_id}-{provider}"
+            ),
+            "host_id": host_id,
+            "host_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "host_type": str(host.get("type") or "").lower(),
+            "address": host.get("address"),
+            "provider": provider,
+            "url": source.get("url"),
+        })
+
+    return normalized
+
+
+def collect_config_diun_image_updates(source):
+    url = source.get("url")
+
+    if not url:
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": "missing Diun metrics URL",
+        }, f"{source['host_id']}: missing Diun metrics URL"
+
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-fsS",
+                "--connect-timeout",
+                "5",
+                "--max-time",
+                "10",
+                str(url),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception as exc:
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": f"Diun metrics query failed: {exc}",
+        }, f"{source['host_id']}: {exc}"
+
+    if result.returncode != 0:
+        output = (result.stdout + result.stderr).strip()
+
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": "Diun metrics query failed",
+        }, f"{source['host_id']}: {output}"
+
+    counts = {
+        "unchange": 0,
+        "update": 0,
+        "error": 0,
+        "new": 0,
+        "skip": 0,
+    }
+    version = ""
+    update_images = set()
+
+    for line in result.stdout.splitlines():
+        if line.startswith("diun_build_info"):
+            match = re.search(r'version="([^"]+)"', line)
+
+            if match:
+                version = match.group(1)
+
+        if not line.startswith("diun_image_last_check_status"):
+            continue
+
+        parts = line.rsplit(None, 1)
+
+        if len(parts) != 2:
+            continue
+
+        try:
+            value = float(parts[1])
+        except ValueError:
+            continue
+
+        if value != 1:
+            continue
+
+        status_match = re.search(r'status="([^"]+)"', line)
+
+        if not status_match:
+            continue
+
+        status = status_match.group(1)
+        counts[status] = counts.get(status, 0) + 1
+
+        if status == "update":
+            image_match = re.search(r'image="([^"]+)"', line)
+
+            if image_match:
+                update_images.add(image_match.group(1))
+
+    tracked = sum(counts.values())
+    updates = counts.get("update", 0)
+    errors = counts.get("error", 0)
+    new = counts.get("new", 0)
+    skipped = counts.get("skip", 0)
+
+    if errors:
+        label = "WARNING"
+        css = "warning"
+        raw = f"{errors} image check errors"
+    elif updates:
+        label = "UPDATE"
+        css = "info"
+        raw = f"{updates} image updates available"
+    elif tracked == 0:
+        label = "INFO"
+        css = "info"
+        raw = "Diun returned no tracked images"
+    elif new or skipped:
+        label = "INFO"
+        css = "info"
+        raw = f"{new} new and {skipped} skipped image states"
+    else:
+        label = "OK"
+        css = "ok"
+        raw = "all tracked images current"
+
+    return {
+        **source,
+        "label": label,
+        "css": css,
+        "tracked": tracked,
+        "updates": updates,
+        "errors": errors,
+        "version": version or "-",
+        "details": sorted(update_images),
+        "raw": raw,
+    }, None
+
+
+def collect_config_truenas_image_updates(source):
+    address = source.get("address")
+
+    if not address:
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": "missing host address",
+        }, f"{source['host_id']}: missing host address"
+
+    apps, error = remote_json(
+        str(address),
+        "midclt call app.query",
+    )
+
+    if error:
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": "TrueNAS app query failed",
+        }, f"{source['host_id']}: {error}"
+
+    if not isinstance(apps, list):
+        return {
+            **source,
+            "label": "UNKNOWN",
+            "css": "info",
+            "tracked": 0,
+            "updates": 0,
+            "errors": 0,
+            "version": "-",
+            "details": [],
+            "raw": "unexpected TrueNAS app response",
+        }, f"{source['host_id']}: app query did not return a list"
+
+    app_items = [
+        app for app in apps
+        if isinstance(app, dict)
+    ]
+    update_details = []
+
+    for app in sorted(
+        app_items,
+        key=lambda item: str(
+            item.get("name") or item.get("id") or ""
+        ).lower(),
+    ):
+        name = str(app.get("name") or app.get("id") or "unknown")
+        update_types = []
+
+        if app.get("upgrade_available") is True:
+            update_types.append("catalog")
+
+        if app.get("image_updates_available") is True:
+            update_types.append("image")
+
+        if update_types:
+            update_details.append(
+                f"{name} ({', '.join(update_types)})"
+            )
+
+    tracked = len(app_items)
+    updates = len(update_details)
+
+    if updates:
+        label = "UPDATE"
+        css = "info"
+        raw = f"{updates} app updates available"
+    elif tracked == 0:
+        label = "INFO"
+        css = "info"
+        raw = "no TrueNAS apps installed"
+    else:
+        label = "OK"
+        css = "ok"
+        raw = "all installed apps current"
+
+    return {
+        **source,
+        "label": label,
+        "css": css,
+        "tracked": tracked,
+        "updates": updates,
+        "errors": 0,
+        "version": "-",
+        "details": update_details,
+        "raw": raw,
+    }, None
+
+
+def collect_config_image_update_checks(sources):
+    rows = []
+    errors = []
+
+    for source in sources:
+        provider = source.get("provider")
+
+        if provider == "diun":
+            row, error = collect_config_diun_image_updates(source)
+        elif provider == "truenas":
+            row, error = collect_config_truenas_image_updates(source)
+        else:
+            continue
+
+        rows.append(row)
+
+        if error:
+            errors.append(error)
+
+    return rows, errors
+
+
+def build_config_image_update_preview(rows):
+    if not rows:
+        return ""
+
+    source_count = len(rows)
+    update_count = sum(
+        int(row.get("updates") or 0)
+        for row in rows
+    )
+
+    source_word = "source" if source_count == 1 else "sources"
+    update_word = "update" if update_count == 1 else "updates"
+
+    table_rows = ""
+
+    for row in rows:
+        details = row.get("details") or []
+
+        if details:
+            details_html = "<br>".join(
+                f'<span class="mono">{h(detail)}</span>'
+                for detail in details
+            )
+        else:
+            details_html = '<span class="mono">-</span>'
+
+        provider = str(row.get("provider") or "-").upper()
+        version = row.get("version") or "-"
+
+        if version != "-":
+            provider_html = (
+                f"<strong>{h(provider)}</strong>"
+                f'<br><span class="muted-small">{h(version)}</span>'
+            )
+        else:
+            provider_html = f"<strong>{h(provider)}</strong>"
+
+        table_rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+        <td>{h(row.get("host_name", "-"))}</td>
+        <td>{provider_html}</td>
+        <td>{h(row.get("tracked", 0))}</td>
+        <td>{h(row.get("updates", 0))}</td>
+        <td>{details_html}</td>
+        <td>{h(row.get("raw", "-"))}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured Image Update Sources</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(source_count)} {h(source_word)} · {h(update_count)} {h(update_word)}</div>
+    </div>
+    <p class="muted-small">Diun metrics and TrueNAS-native app update fields are checked per configured source. These preview results do not affect service status cards or Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Host</th>
+        <th>Provider</th>
+        <th>Tracked</th>
+        <th>Updates</th>
+        <th>Update Details</th>
         <th>Result</th>
       </tr>
       {table_rows}
@@ -3625,6 +4026,35 @@ if config_truenas_replication_hosts:
         f"{len([row for row in config_truenas_replication_rows if row.get('task_enabled') is not None])}"
     )
 
+config_image_update_sources = normalize_config_image_update_sources(
+    CONFIG_IMAGE_UPDATES,
+    CONFIG_HOSTS,
+)
+config_image_update_rows, config_image_update_errors = (
+    collect_config_image_update_checks(
+        config_image_update_sources,
+    )
+)
+
+for error in config_image_update_errors:
+    collection_errors.append(
+        ("Configured image update query", error)
+    )
+
+config_image_update_preview_html = build_config_image_update_preview(
+    config_image_update_rows,
+)
+
+if config_image_update_sources:
+    print(
+        "Configured image update sources checked: "
+        f"{len(config_image_update_sources)}"
+    )
+    print(
+        "Configured image updates discovered: "
+        f"{sum(int(row.get('updates') or 0) for row in config_image_update_rows)}"
+    )
+
 config_local_storage_checks = normalize_config_local_storage_checks(CONFIG_ENABLED_LOCAL_STORAGE)
 config_local_storage_statuses = collect_config_local_storage_checks(config_local_storage_checks)
 config_local_storage_preview_html = build_config_local_storage_preview(
@@ -4774,6 +5204,8 @@ pre, .mono {{
   {config_truenas_snapshot_preview_html}
 
   {config_truenas_replication_preview_html}
+
+  {config_image_update_preview_html}
 
   {config_protection_preview_html}
 
