@@ -2710,12 +2710,99 @@ def config_host_service_unreachable(host, services, statuses):
     )
 
 
-def build_public_host_summary_preview(hosts, services, statuses, web_statuses=None):
+def normalize_public_summary_cards(summary_cards):
+    supported = ("systems", "storage", "protection", "services")
+    requested = []
+    seen = set()
+
+    for card in summary_cards or []:
+        card_name = str(card).strip().lower()
+
+        if card_name in supported and card_name not in seen:
+            requested.append(card_name)
+            seen.add(card_name)
+
+    if not requested:
+        return list(supported)
+
+    return requested
+
+
+def build_compact_host_service_details(services, statuses):
+    detail_html = ""
+    exception_count = 0
+
+    for service in services:
+        service_id = service["id"]
+        status = statuses.get(
+            service_id,
+            {"label": "UNKNOWN", "css": "info", "raw": "-"},
+        )
+        label = status.get("label", "UNKNOWN")
+
+        if label == "UP":
+            continue
+
+        exception_count += 1
+        name = h(service["display"])
+        url = service.get("url")
+
+        if url:
+            name_html = (
+                f'<a class="service-link" href="{h(url)}" '
+                f'target="_blank" rel="noopener noreferrer">{name}</a>'
+            )
+        else:
+            name_html = name
+
+        detail_html += (
+            '<span class="service-line">'
+            f'<strong>{name_html}</strong> '
+            f'<span class="{status_text_class(label)}">{h(label)}</span>'
+            '</span>\n'
+        )
+
+    if detail_html:
+        return {
+            "details": detail_html,
+            "details_class": "two-column" if exception_count > 6 else "",
+            "exceptions": exception_count,
+        }
+
+    if services:
+        return {
+            "details": build_public_summary_detail(
+                "Configured services",
+                "ALL UP",
+                "ok",
+            ),
+            "details_class": "",
+            "exceptions": 0,
+        }
+
+    return {
+        "details": "",
+        "details_class": "",
+        "exceptions": 0,
+    }
+
+
+def build_public_host_summary_preview(
+    hosts,
+    services,
+    statuses,
+    web_statuses=None,
+    summary_cards=None,
+):
     # This is intentionally preview-only while the existing reference summary row
     # remains active. The four-column CSS is a layout maximum, not a fixed number
     # of required cards: two configured hosts should render two summary cards.
     enabled_hosts = enabled_items(hosts)
     web_statuses = web_statuses or {}
+    compact_service_details = (
+        summary_cards is not None
+        and "services" in normalize_public_summary_cards(summary_cards)
+    )
 
     if not enabled_hosts:
         return ""
@@ -2736,7 +2823,10 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
         host_id = str(host.get("id") or "")
         title = configured_host_display_name(host)
         host_key = configured_host_key(host)
-        host_web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        host_web_status = web_statuses.get(
+            host_key,
+            {"label": "NO URL", "css": "info", "raw": "-"},
+        )
         host_services = services_by_host.get(host_id, [])
         summary = build_service_summary(host_services, statuses)
         host_unreachable = config_host_service_unreachable(
@@ -2774,6 +2864,13 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
                 summary_value = "No services configured yet"
                 details_class = ""
                 details = '<span class="service-line"><strong>Host Web UI only</strong> <span class="info-text">INFO</span></span>'
+            elif compact_service_details:
+                compact_details = build_compact_host_service_details(
+                    host_services,
+                    statuses,
+                )
+                details = compact_details["details"]
+                details_class = compact_details["details_class"]
 
         cards_html += f"""
     <div class="summary-card {h(host_card_css)}">
@@ -3067,18 +3164,7 @@ def build_public_four_card_summary_preview(
         "services": lambda: build_public_services_summary_card(services, service_statuses),
     }
 
-    requested = []
-    seen = set()
-
-    for card in summary_cards:
-        card_name = str(card).strip().lower()
-
-        if card_name in builders and card_name not in seen:
-            requested.append(card_name)
-            seen.add(card_name)
-
-    if not requested:
-        requested = ["systems", "storage", "protection", "services"]
+    requested = normalize_public_summary_cards(summary_cards)
 
     cards_html = "\n".join(builders[card]() for card in requested)
     active_cards = " · ".join(card.title() for card in requested)
@@ -4602,6 +4688,7 @@ public_summary_preview_html = build_public_host_summary_preview(
     public_summary_services,
     public_summary_statuses,
     configured_host_web_statuses,
+    CONFIG_SUMMARY_CARDS,
 )
 
 public_four_card_summary_preview_html = build_public_four_card_summary_preview(

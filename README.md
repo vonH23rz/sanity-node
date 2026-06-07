@@ -240,6 +240,8 @@ Current Phase 2 public-preview behavior:
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
 - configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
+- when the four-card Services summary is active, host-based cards retain their service counts but show only non-`UP` service exceptions; fully healthy hosts show one `ALL UP` line
+- when the Services summary is disabled, host-based cards retain the full per-service detail list
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
@@ -356,6 +358,8 @@ Systems · Storage · Protection · Services
 
 The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
 
+To avoid rendering the same complete service inventory twice, host-based cards use compact service details whenever the Services card is active. Their App, Helper, UP, DOWN, UPDATE, and INFO counts remain unchanged, but only non-`UP` services are listed. When every configured service is healthy, the host card shows one `Configured services — ALL UP` line. Disabling the Services card restores the full host-level service list. An unreachable TrueNAS host still collapses to `Host unreachable` and `UNAVAILABLE` before this compaction is applied.
+
 The Systems card normally reflects each enabled host's Web UI check. When all configured TrueNAS app checks for a host are `UNKNOWN` because of a recognized SSH or network timeout, that host is instead shown as `UNREACHABLE` and counted as `DOWN`. Authentication failures, host-key failures, connection refusal, parsing errors, partial app success, Linux hosts, and HTTP-only hosts retain the existing Web UI-based Systems status.
 
 This propagation is preview-only and does not affect Overall Status or the original hardcoded summary cards.
@@ -427,6 +431,8 @@ The current tests protect:
 - TrueNAS host-collapse gating, including partial success, authentication errors, Linux hosts, HTTP-only services, and missing statuses
 - Systems-summary host-health propagation, Web UI fallback behavior, and mixed HTTP/TrueNAS service handling
 - collector-error classification precedence, fallback behavior, Type badges, HTML escaping, and empty-section rendering
+- summary-card normalization and fallback behavior
+- compact host-service exception rendering, `ALL UP` output, full-detail fallback, and unreachable-host precedence
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 
