@@ -225,7 +225,8 @@ Current Phase 2 public-preview behavior:
 - configured hosts can appear as host-based summary cards
 - host Web UI links can show preview reachability badges
 - a confirmed TrueNAS SSH/network timeout collapses that host card to `Host unreachable` instead of listing every configured service
-- Web UI-only, authentication, host-key, and parsing failures retain the normal per-service detail
+- confirmed TrueNAS host unreachability also overrides the host's Web UI result in the four-card Systems summary
+- Web UI-only, authentication, host-key, and parsing failures retain the normal per-service detail and Systems status
 - configured HTTP services can report live `UP` / `DOWN`
 - configured Docker services on the collector node can report live container status
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
@@ -353,6 +354,10 @@ Systems · Storage · Protection · Services
 
 The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
 
+The Systems card normally reflects each enabled host's Web UI check. When all configured TrueNAS app checks for a host are `UNKNOWN` because of a recognized SSH or network timeout, that host is instead shown as `UNREACHABLE` and counted as `DOWN`. Authentication failures, host-key failures, connection refusal, parsing errors, partial app success, Linux hosts, and HTTP-only hosts retain the existing Web UI-based Systems status.
+
+This propagation is preview-only and does not affect Overall Status or the original hardcoded summary cards.
+
 ### Configuration validation
 
 Validate the example configuration with:
@@ -418,6 +423,7 @@ The current tests protect:
 - unhealthy service status precedence over update notices
 - SSH and network-error classification for unreachable hosts
 - TrueNAS host-collapse gating, including partial success, authentication errors, Linux hosts, HTTP-only services, and missing statuses
+- Systems-summary host-health propagation, Web UI fallback behavior, and mixed HTTP/TrueNAS service handling
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 

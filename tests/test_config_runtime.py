@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import ast
+import html
 import unittest
 from pathlib import Path
 
@@ -12,10 +13,23 @@ GENERATOR = (
 )
 
 FUNCTIONS_UNDER_TEST = {
+    "cfg_get",
+    "enabled_items",
     "config_image_reference_aliases",
     "apply_config_image_update_overlay",
+    "configured_host_key",
+    "configured_host_display_name",
+    "configured_host_sort_key",
     "config_error_indicates_host_unreachable",
     "config_host_service_unreachable",
+    "status_text_class",
+    "h",
+    "build_public_summary_card",
+    "public_summary_text_class",
+    "build_public_summary_detail",
+    "public_card_css",
+    "config_system_host_status",
+    "build_public_systems_summary_card",
 }
 
 
@@ -43,7 +57,14 @@ def load_generator_functions():
     module = ast.Module(body=selected_nodes, type_ignores=[])
     ast.fix_missing_locations(module)
 
-    namespace = {}
+    namespace = {
+        "html": html,
+        "CONFIG": {
+            "collector": {
+                "id": "collector",
+            }
+        },
+    }
     exec(
         compile(module, filename=str(GENERATOR), mode="exec"),
         namespace,
@@ -64,6 +85,12 @@ config_error_indicates_host_unreachable = FUNCTIONS[
 ]
 config_host_service_unreachable = FUNCTIONS[
     "config_host_service_unreachable"
+]
+config_system_host_status = FUNCTIONS[
+    "config_system_host_status"
+]
+build_public_systems_summary_card = FUNCTIONS[
+    "build_public_systems_summary_card"
 ]
 
 
@@ -471,6 +498,158 @@ class HostServiceUnreachableTests(unittest.TestCase):
                 statuses,
             )
         )
+
+
+class SystemsSummaryHostHealthTests(unittest.TestCase):
+    def setUp(self):
+        self.host = {
+            "id": "t620",
+            "type": "truenas",
+            "display_name": "T620 TrueNAS",
+            "enabled": True,
+        }
+        self.web_ok = {
+            "label": "OK",
+            "css": "ok",
+            "raw": "HTTP 200",
+        }
+
+    def test_unreachable_services_override_healthy_web_ui(self):
+        services = [
+            {
+                "id": "jellyfin",
+                "host": "t620",
+                "check": "truenas_app",
+            },
+            {
+                "id": "redis",
+                "host": "t620",
+                "check": "truenas_app",
+            },
+        ]
+        statuses = {
+            "jellyfin": {
+                "label": "UNKNOWN",
+                "raw": "Connection timed out",
+            },
+            "redis": {
+                "label": "UNKNOWN",
+                "raw": "Connection timed out",
+            },
+        }
+
+        result = config_system_host_status(
+            self.host,
+            services,
+            statuses,
+            self.web_ok,
+        )
+
+        self.assertEqual(result["label"], "UNREACHABLE")
+        self.assertEqual(result["css"], "bad")
+
+        card = build_public_systems_summary_card(
+            [self.host],
+            {"t620": self.web_ok},
+            services,
+            statuses,
+        )
+
+        self.assertIn("1 Systems · 0 OK · 1 DOWN", card)
+        self.assertIn("UNREACHABLE", card)
+        self.assertIn("summary-card bad", card)
+
+    def test_healthy_app_status_preserves_web_ui_status(self):
+        services = [
+            {
+                "id": "jellyfin",
+                "host": "t620",
+                "check": "truenas_app",
+            }
+        ]
+        statuses = {
+            "jellyfin": {
+                "label": "UP",
+                "raw": "RUNNING",
+            }
+        }
+
+        result = config_system_host_status(
+            self.host,
+            services,
+            statuses,
+            self.web_ok,
+        )
+
+        self.assertEqual(result, self.web_ok)
+
+        card = build_public_systems_summary_card(
+            [self.host],
+            {"t620": self.web_ok},
+            services,
+            statuses,
+        )
+
+        self.assertIn("1 Systems · 1 OK · 0 DOWN", card)
+        self.assertNotIn("UNREACHABLE", card)
+
+    def test_authentication_error_preserves_web_ui_status(self):
+        services = [
+            {
+                "id": "jellyfin",
+                "host": "t620",
+                "check": "truenas_app",
+            }
+        ]
+        statuses = {
+            "jellyfin": {
+                "label": "UNKNOWN",
+                "raw": "Permission denied (publickey)",
+            }
+        }
+
+        result = config_system_host_status(
+            self.host,
+            services,
+            statuses,
+            self.web_ok,
+        )
+
+        self.assertEqual(result, self.web_ok)
+
+    def test_mixed_http_and_truenas_checks_follow_host_collapse_rule(self):
+        services = [
+            {
+                "id": "jellyfin",
+                "host": "t620",
+                "check": "truenas_app",
+            },
+            {
+                "id": "web-ui-service",
+                "host": "t620",
+                "check": "http",
+            },
+        ]
+        statuses = {
+            "jellyfin": {
+                "label": "UNKNOWN",
+                "raw": "Operation timed out",
+            },
+            "web-ui-service": {
+                "label": "UP",
+                "raw": "HTTP 200",
+            },
+        }
+
+        result = config_system_host_status(
+            self.host,
+            services,
+            statuses,
+            self.web_ok,
+        )
+
+        self.assertEqual(result["label"], "UNREACHABLE")
+        self.assertEqual(result["css"], "bad")
 
 
 if __name__ == "__main__":

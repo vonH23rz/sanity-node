@@ -2725,8 +2725,37 @@ def public_card_css(bad_count=0, warning_count=0, info_count=0):
     return ""
 
 
-def build_public_systems_summary_card(hosts, web_statuses):
+def config_system_host_status(host, services, statuses, web_status):
+    host_id = str(host.get("id") or "")
+    host_services = [
+        service
+        for service in services
+        if str(service.get("host") or "") == host_id
+    ]
+
+    if config_host_service_unreachable(
+        host,
+        host_services,
+        statuses,
+    ):
+        return {
+            "label": "UNREACHABLE",
+            "css": "bad",
+            "raw": "configured TrueNAS app checks indicate host unreachable",
+        }
+
+    return web_status
+
+
+def build_public_systems_summary_card(
+    hosts,
+    web_statuses,
+    services=None,
+    service_statuses=None,
+):
     enabled_hosts = sorted(enabled_items(hosts), key=configured_host_sort_key)
+    services = services or []
+    service_statuses = service_statuses or {}
 
     if not enabled_hosts:
         return build_public_summary_card(
@@ -2744,7 +2773,16 @@ def build_public_systems_summary_card(hosts, web_statuses):
     for host in enabled_hosts:
         host_key = configured_host_key(host)
         display_name = configured_host_display_name(host)
-        status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
+        web_status = web_statuses.get(
+            host_key,
+            {"label": "NO URL", "css": "info", "raw": "-"},
+        )
+        status = config_system_host_status(
+            host,
+            services,
+            service_statuses,
+            web_status,
+        )
         label = status.get("label", "UNKNOWN")
         css = status.get("css", "info")
 
@@ -2899,7 +2937,12 @@ def build_public_four_card_summary_preview(
     summary_cards,
 ):
     builders = {
-        "systems": lambda: build_public_systems_summary_card(hosts, web_statuses),
+        "systems": lambda: build_public_systems_summary_card(
+            hosts,
+            web_statuses,
+            services,
+            service_statuses,
+        ),
         "storage": lambda: build_public_storage_summary_card(local_storage_checks, local_storage_statuses),
         "protection": lambda: build_public_protection_summary_card(protection_relationships, protection_statuses),
         "services": lambda: build_public_services_summary_card(services, service_statuses),
