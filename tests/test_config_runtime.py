@@ -21,9 +21,12 @@ FUNCTIONS_UNDER_TEST = {
     "configured_host_display_name",
     "configured_host_sort_key",
     "config_error_indicates_host_unreachable",
+    "classify_collector_error",
+    "build_collector_errors_section",
     "config_host_service_unreachable",
     "status_text_class",
     "h",
+    "badge",
     "build_public_summary_card",
     "public_summary_text_class",
     "build_public_summary_detail",
@@ -82,6 +85,12 @@ apply_config_image_update_overlay = FUNCTIONS[
 ]
 config_error_indicates_host_unreachable = FUNCTIONS[
     "config_error_indicates_host_unreachable"
+]
+classify_collector_error = FUNCTIONS[
+    "classify_collector_error"
+]
+build_collector_errors_section = FUNCTIONS[
+    "build_collector_errors_section"
 ]
 config_host_service_unreachable = FUNCTIONS[
     "config_host_service_unreachable"
@@ -317,6 +326,83 @@ class ImageUpdateOverlayTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(statuses["redis"]["label"], "UP")
         self.assertEqual(result["redis"]["label"], "UPDATE")
+
+
+class CollectorErrorClassificationTests(unittest.TestCase):
+    def test_error_families_are_classified(self):
+        cases = (
+            ("Connection timed out", "TIMEOUT", "bad"),
+            ("No route to host", "NETWORK", "bad"),
+            ("Host key verification failed", "HOST KEY", "warning"),
+            ("Permission denied (publickey)", "AUTH", "warning"),
+            ("Connection refused", "REFUSED", "bad"),
+            ("Failed to parse JSON response", "PARSE", "warning"),
+            ("midclt call app.query failed", "COMMAND", "warning"),
+        )
+
+        for message, expected_label, expected_css in cases:
+            with self.subTest(message=message):
+                result = classify_collector_error(message)
+                self.assertEqual(result["label"], expected_label)
+                self.assertEqual(result["css"], expected_css)
+
+    def test_empty_error_is_unknown(self):
+        self.assertEqual(
+            classify_collector_error(""),
+            {"label": "UNKNOWN", "css": "info"},
+        )
+        self.assertEqual(
+            classify_collector_error(None),
+            {"label": "UNKNOWN", "css": "info"},
+        )
+
+    def test_unmatched_error_uses_other_fallback(self):
+        self.assertEqual(
+            classify_collector_error("Unexpected collector response"),
+            {"label": "OTHER", "css": "info"},
+        )
+
+    def test_timeout_precedence_wins_over_authentication_text(self):
+        result = classify_collector_error(
+            "Permission denied after connection timed out"
+        )
+
+        self.assertEqual(result["label"], "TIMEOUT")
+        self.assertEqual(result["css"], "bad")
+
+
+class CollectorErrorsRenderingTests(unittest.TestCase):
+    def test_empty_error_list_renders_no_section(self):
+        self.assertEqual(
+            build_collector_errors_section([]),
+            "",
+        )
+
+    def test_error_section_renders_type_badges_and_escaped_content(self):
+        section = build_collector_errors_section(
+            [
+                (
+                    "Configured TrueNAS app query",
+                    "Connection timed out",
+                ),
+                (
+                    "Parser <check>",
+                    "Failed to parse <json>",
+                ),
+            ]
+        )
+
+        self.assertIn("<h2>Collector Errors</h2>", section)
+        self.assertIn("<th>Type</th>", section)
+        self.assertIn('class="badge bad">TIMEOUT</span>', section)
+        self.assertIn('class="badge warning">PARSE</span>', section)
+        self.assertIn("Parser &lt;check&gt;", section)
+        self.assertIn("Failed to parse &lt;json&gt;", section)
+        self.assertEqual(section.count('<tr class="bad">'), 2)
+        self.assertIn(
+            "does not change Overall Status handling",
+            section,
+        )
 
 
 class HostUnreachableClassifierTests(unittest.TestCase):
