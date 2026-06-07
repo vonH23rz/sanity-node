@@ -37,6 +37,10 @@ FUNCTIONS_UNDER_TEST = {
     "public_card_css",
     "config_system_host_status",
     "build_public_systems_summary_card",
+    "build_public_storage_summary_card",
+    "build_public_protection_summary_card",
+    "build_public_services_summary_card",
+    "build_public_four_card_summary_preview",
 }
 
 
@@ -113,6 +117,18 @@ config_system_host_status = FUNCTIONS[
 ]
 build_public_systems_summary_card = FUNCTIONS[
     "build_public_systems_summary_card"
+]
+build_public_storage_summary_card = FUNCTIONS[
+    "build_public_storage_summary_card"
+]
+build_public_protection_summary_card = FUNCTIONS[
+    "build_public_protection_summary_card"
+]
+build_public_services_summary_card = FUNCTIONS[
+    "build_public_services_summary_card"
+]
+build_public_four_card_summary_preview = FUNCTIONS[
+    "build_public_four_card_summary_preview"
 ]
 
 
@@ -870,6 +886,321 @@ class HostSummaryCompactRenderingTests(unittest.TestCase):
         self.assertIn("UNAVAILABLE", html_output)
         self.assertNotIn("Jellyfin", html_output)
         self.assertNotIn("Redis", html_output)
+
+
+class StorageSummaryCardTests(unittest.TestCase):
+    def test_empty_storage_configuration_renders_info_card(self):
+        card = build_public_storage_summary_card([], {})
+
+        self.assertIn("No storage checks configured yet", card)
+        self.assertIn("summary-card info", card)
+        self.assertIn("local_storage", card)
+
+    def test_storage_counts_and_bad_precedence(self):
+        checks = [
+            {"id": "root", "label": "Root"},
+            {"id": "archive", "label": "Archive"},
+            {"id": "backup", "label": "Backup"},
+            {"id": "remote", "mount": "/mnt/remote"},
+        ]
+        statuses = {
+            "root": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "42%",
+            },
+            "archive": {
+                "label": "WARNING",
+                "css": "warning",
+                "raw": "82%",
+            },
+            "backup": {
+                "label": "CRITICAL",
+                "css": "bad",
+                "raw": "96%",
+            },
+            "remote": {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "-",
+            },
+        }
+
+        card = build_public_storage_summary_card(checks, statuses)
+
+        self.assertIn(
+            "4 Checks · 1 OK · 1 WARNING · 1 CRITICAL · 1 INFO",
+            card,
+        )
+        self.assertIn("summary-card bad", card)
+        self.assertIn("Root", card)
+        self.assertIn("Archive", card)
+        self.assertIn("Backup", card)
+        self.assertIn("/mnt/remote", card)
+
+    def test_storage_details_use_two_columns_above_six_checks(self):
+        checks = [
+            {"id": f"disk-{index}", "label": f"Disk {index}"}
+            for index in range(7)
+        ]
+        statuses = {
+            check["id"]: {
+                "label": "OK",
+                "css": "ok",
+                "raw": "healthy",
+            }
+            for check in checks
+        }
+
+        card = build_public_storage_summary_card(checks, statuses)
+
+        self.assertIn("service-details two-column", card)
+        self.assertIn(
+            "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
+            card,
+        )
+
+
+class ProtectionSummaryCardTests(unittest.TestCase):
+    def test_empty_protection_configuration_renders_info_card(self):
+        card = build_public_protection_summary_card([], {})
+
+        self.assertIn(
+            "No protection relationships configured yet",
+            card,
+        )
+        self.assertIn("summary-card info", card)
+        self.assertIn("protection", card)
+
+    def test_protection_counts_and_bad_precedence(self):
+        relationships = [
+            {"id": "configured", "name": "Primary Backup"},
+            {"id": "incomplete", "name": "Archive Backup"},
+            {"id": "failed", "name": "Remote Backup"},
+            {"id": "unknown", "name": "Cold Backup"},
+        ]
+        statuses = {
+            "configured": {
+                "label": "CONFIGURED",
+                "css": "ok",
+                "raw": "ready",
+            },
+            "incomplete": {
+                "label": "INCOMPLETE",
+                "css": "warning",
+                "raw": "missing dataset",
+            },
+            "failed": {
+                "label": "FAILED",
+                "css": "bad",
+                "raw": "task failed",
+            },
+            "unknown": {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "-",
+            },
+        }
+
+        card = build_public_protection_summary_card(
+            relationships,
+            statuses,
+        )
+
+        self.assertIn(
+            "4 Relationships · 1 CONFIGURED · 1 INCOMPLETE"
+            " · 1 BAD · 1 INFO",
+            card,
+        )
+        self.assertIn("summary-card bad", card)
+        self.assertIn("Primary Backup", card)
+        self.assertIn("Archive Backup", card)
+        self.assertIn("Remote Backup", card)
+        self.assertIn("Cold Backup", card)
+
+
+class ServicesSummaryCardTests(unittest.TestCase):
+    def test_empty_services_configuration_renders_info_card(self):
+        card = build_public_services_summary_card([], {})
+
+        self.assertIn("No services configured yet", card)
+        self.assertIn("summary-card info", card)
+
+    def test_service_counts_and_bad_precedence(self):
+        services = [
+            {
+                "id": "web",
+                "display": "Web",
+                "type": "app",
+            },
+            {
+                "id": "database",
+                "display": "Database",
+                "type": "helper",
+            },
+            {
+                "id": "media",
+                "display": "Media",
+                "type": "app",
+            },
+            {
+                "id": "cache",
+                "display": "Cache",
+                "type": "helper",
+            },
+        ]
+        statuses = {
+            "web": {
+                "label": "UP",
+                "css": "ok",
+                "raw": "healthy",
+            },
+            "database": {
+                "label": "DOWN",
+                "css": "bad",
+                "raw": "stopped",
+            },
+            "media": {
+                "label": "UPDATE",
+                "css": "info",
+                "raw": "update available",
+            },
+            "cache": {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "-",
+            },
+        }
+
+        card = build_public_services_summary_card(
+            services,
+            statuses,
+        )
+
+        self.assertIn(
+            "2 Apps · 2 Helpers · 1 UP · 1 DOWN"
+            " · 1 UPDATE · 1 INFO",
+            card,
+        )
+        self.assertIn("summary-card bad", card)
+        self.assertIn("Web", card)
+        self.assertIn("Database", card)
+        self.assertIn("Media", card)
+        self.assertIn("Cache", card)
+
+
+class FourCardSummaryPreviewTests(unittest.TestCase):
+    def setUp(self):
+        self.hosts = [
+            {
+                "id": "collector",
+                "display_name": "Utility Node",
+                "type": "linux",
+                "enabled": True,
+            }
+        ]
+        self.web_statuses = {
+            "collector": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "HTTP 200",
+            }
+        }
+        self.storage_checks = [
+            {
+                "id": "root",
+                "label": "Root",
+            }
+        ]
+        self.storage_statuses = {
+            "root": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "42%",
+            }
+        }
+        self.relationships = [
+            {
+                "id": "backup",
+                "name": "Primary Backup",
+            }
+        ]
+        self.protection_statuses = {
+            "backup": {
+                "label": "CONFIGURED",
+                "css": "ok",
+                "raw": "ready",
+            }
+        }
+        self.services = [
+            {
+                "id": "web",
+                "host": "collector",
+                "display": "Web",
+                "type": "app",
+                "check": "http",
+            }
+        ]
+        self.service_statuses = {
+            "web": {
+                "label": "UP",
+                "css": "ok",
+                "raw": "HTTP 200",
+            }
+        }
+
+    def render(self, summary_cards):
+        return build_public_four_card_summary_preview(
+            self.hosts,
+            self.web_statuses,
+            self.storage_checks,
+            self.storage_statuses,
+            self.relationships,
+            self.protection_statuses,
+            self.services,
+            self.service_statuses,
+            summary_cards,
+        )
+
+    def test_selected_cards_follow_normalized_order(self):
+        preview = self.render(
+            [
+                "services",
+                "systems",
+                "SERVICES",
+                "unknown",
+                "storage",
+            ]
+        )
+
+        self.assertIn(
+            "Active cards: Services · Systems · Storage",
+            preview,
+        )
+        self.assertLess(
+            preview.index('<div class="title">Services</div>'),
+            preview.index('<div class="title">Systems</div>'),
+        )
+        self.assertLess(
+            preview.index('<div class="title">Systems</div>'),
+            preview.index('<div class="title">Storage</div>'),
+        )
+        self.assertNotIn(
+            '<div class="title">Protection</div>',
+            preview,
+        )
+
+    def test_invalid_selection_renders_default_four_cards(self):
+        preview = self.render(["unknown"])
+
+        self.assertIn(
+            "Active cards: Systems · Storage · Protection · Services",
+            preview,
+        )
+        self.assertIn('<div class="title">Systems</div>', preview)
+        self.assertIn('<div class="title">Storage</div>', preview)
+        self.assertIn('<div class="title">Protection</div>', preview)
+        self.assertIn('<div class="title">Services</div>', preview)
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):
