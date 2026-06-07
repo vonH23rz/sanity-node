@@ -342,7 +342,9 @@ protection:
 # - truenas: reads native app update fields through midclt app.query
 #
 # UPDATE means maintenance is available. It does not mean the service is down.
-# Preview results do not affect service cards or Overall Status yet.
+# Healthy configured Docker and TrueNAS app services can be overlaid as UPDATE
+# in the config-driven service previews. Existing unhealthy states always win.
+# Update overlays do not affect Overall Status or the original dashboard.
 
 image_updates:
   enabled: false
