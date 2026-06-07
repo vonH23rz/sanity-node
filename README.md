@@ -165,7 +165,8 @@ sanity-node/
 │   └── config.example.yaml
 ├── scripts/
 │   ├── generate-dashboard.py
-│   └── render-preview.sh
+│   ├── render-preview.sh
+│   └── validate-config.py
 ├── systemd/
 │   ├── sanity-node-generate.service
 │   ├── sanity-node-generate.timer
@@ -254,6 +255,34 @@ Systems · Storage · Protection · Services
 ```
 
 The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
+
+### Configuration validation
+
+Validate the example configuration with:
+
+```bash
+./scripts/validate-config.py
+```
+
+Validate another configuration file by passing its path:
+
+```bash
+./scripts/validate-config.py config/config.yaml
+```
+
+The validator checks:
+
+- YAML syntax and top-level structure
+- required dashboard and collector settings
+- host IDs, host types, and duplicate hosts
+- enabled references to known hosts
+- service types, check types, URLs, containers, and TrueNAS app IDs
+- local storage warning and critical thresholds
+- backup marker settings and maximum age values
+- protection relationships and dataset lists
+- supported and duplicate `summary_cards` values
+
+Validation errors return exit code `1`. Warnings describe runtime fallback behavior, such as ignored summary cards, but do not fail validation. The validator reads configuration only; it does not generate or overwrite a dashboard.
 
 ### Safe local preview render
 
