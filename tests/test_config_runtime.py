@@ -33,6 +33,11 @@ FUNCTIONS_UNDER_TEST = {
     "normalize_config_local_storage_checks",
     "config_local_storage_status",
     "collect_config_local_storage_checks",
+    "normalize_config_backup_checks",
+    "config_backup_status",
+    "config_remote_backup_command",
+    "parse_config_remote_backup_payload",
+    "collect_config_backup_checks",
     "config_image_reference_aliases",
     "apply_config_image_update_overlay",
     "configured_host_key",
@@ -118,6 +123,7 @@ def load_generator_functions():
         "subprocess": subprocess,
         "datetime": datetime,
         "timedelta": timedelta,
+        "Path": Path,
         "CONFIG": {
             "collector": {
                 "id": "collector",
@@ -153,6 +159,21 @@ config_local_storage_status = FUNCTIONS[
 ]
 collect_config_local_storage_checks = FUNCTIONS[
     "collect_config_local_storage_checks"
+]
+normalize_config_backup_checks = FUNCTIONS[
+    "normalize_config_backup_checks"
+]
+config_backup_status = FUNCTIONS[
+    "config_backup_status"
+]
+config_remote_backup_command = FUNCTIONS[
+    "config_remote_backup_command"
+]
+parse_config_remote_backup_payload = FUNCTIONS[
+    "parse_config_remote_backup_payload"
+]
+collect_config_backup_checks = FUNCTIONS[
+    "collect_config_backup_checks"
 ]
 config_image_reference_aliases = FUNCTIONS[
     "config_image_reference_aliases"
@@ -1010,6 +1031,417 @@ class RemoteLinuxStorageRuntimeTests(unittest.TestCase):
         status = statuses["remote-archive"]
         self.assertEqual(status["label"], "NOT CHECKED")
         self.assertEqual(status["css"], "info")
+
+
+
+class RemoteLinuxBackupRuntimeTests(unittest.TestCase):
+    def host(self, **overrides):
+        host = {
+            "id": "backup-node",
+            "enabled": True,
+            "display_name": "Backup Node",
+            "hostname": "backup-node",
+            "address": "192.168.1.50",
+            "type": "linux",
+            "ssh": {
+                "enabled": True,
+                "user": "monitor",
+                "key_file": "/app/ssh/backup-node",
+            },
+            "modules": {
+                "backup_status": True,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    def check(self, **overrides):
+        check = {
+            "id": "remote-backup",
+            "host": "backup-node",
+            "name": "Remote Backup",
+            "marker_file": (
+                "/var/backups/archive/"
+                "last successful backup.txt"
+            ),
+            "systemd_timer": "archive-backup.timer",
+            "target": "backup/archive",
+            "log_dir": "/var/log/archive-backup",
+            "max_age_hours": 36,
+        }
+        check.update(overrides)
+        return check
+
+    def test_normalizer_selects_eligible_remote_linux_check(self):
+        checks = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(
+            checks[0]["remote_host"],
+            {
+                "id": "backup-node",
+                "display_name": "Backup Node",
+                "address": "192.168.1.50",
+                "ssh_user": "monitor",
+                "ssh_key_file": "/app/ssh/backup-node",
+            },
+        )
+
+    def test_normalizer_rejects_ineligible_remote_hosts(self):
+        cases = [
+            ("collector", self.host(id="collector")),
+            ("disabled", self.host(enabled=False)),
+            ("truenas", self.host(type="truenas")),
+            (
+                "module-disabled",
+                self.host(modules={"backup_status": False}),
+            ),
+            ("missing-address", self.host(address="")),
+            (
+                "ssh-disabled",
+                self.host(
+                    ssh={
+                        "enabled": False,
+                        "user": "monitor",
+                        "key_file": "/app/ssh/backup-node",
+                    },
+                ),
+            ),
+            (
+                "missing-user",
+                self.host(
+                    ssh={
+                        "enabled": True,
+                        "user": "",
+                        "key_file": "/app/ssh/backup-node",
+                    },
+                ),
+            ),
+            (
+                "missing-key",
+                self.host(
+                    ssh={
+                        "enabled": True,
+                        "user": "monitor",
+                        "key_file": "",
+                    },
+                ),
+            ),
+        ]
+
+        for name, host in cases:
+            with self.subTest(name=name):
+                check = self.check(host=host["id"])
+                normalized = normalize_config_backup_checks(
+                    [check],
+                    [host],
+                )
+
+                self.assertEqual(len(normalized), 1)
+                self.assertNotIn("remote_host", normalized[0])
+
+    def test_collector_local_marker_behavior_is_preserved(self):
+        marker_epoch = datetime.now().timestamp() - 3600
+        marker_path = mock.Mock()
+        marker_path.exists.return_value = True
+        marker_path.stat.return_value = SimpleNamespace(
+            st_mtime=marker_epoch,
+        )
+        path_factory = mock.Mock(return_value=marker_path)
+
+        normalized = normalize_config_backup_checks(
+            [
+                self.check(
+                    id="local-backup",
+                    host="collector",
+                    marker_file="/tmp/local-backup.marker",
+                    systemd_timer=None,
+                )
+            ],
+            [],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {"Path": path_factory},
+        ):
+            statuses = collect_config_backup_checks(normalized)
+
+        path_factory.assert_called_once_with(
+            "/tmp/local-backup.marker"
+        )
+        self.assertEqual(
+            statuses["local-backup"]["label"],
+            "OK",
+        )
+
+    def test_collector_local_inactive_timer_is_warning(self):
+        marker_epoch = datetime.now().timestamp() - 3600
+        marker_path = mock.Mock()
+        marker_path.exists.return_value = True
+        marker_path.stat.return_value = SimpleNamespace(
+            st_mtime=marker_epoch,
+        )
+        path_factory = mock.Mock(return_value=marker_path)
+        timer_result = SimpleNamespace(
+            returncode=3,
+            stdout="inactive\n",
+            stderr="",
+        )
+
+        normalized = normalize_config_backup_checks(
+            [
+                self.check(
+                    id="local-backup",
+                    host="collector",
+                    marker_file="/tmp/local-backup.marker",
+                )
+            ],
+            [],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {"Path": path_factory},
+        ), mock.patch.object(
+            subprocess,
+            "run",
+            return_value=timer_result,
+        ):
+            statuses = collect_config_backup_checks(normalized)
+
+        self.assertEqual(
+            statuses["local-backup"]["label"],
+            "WARNING",
+        )
+        self.assertIn(
+            "timer inactive",
+            statuses["local-backup"]["raw"],
+        )
+
+    def test_remote_command_quotes_marker_and_reads_timer(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+        check = normalized[0]
+        marker_epoch = datetime.now().timestamp() - 3600
+        runner = mock.Mock(
+            return_value=(
+                0,
+                f"MTIME={marker_epoch}\nTIMER=active",
+            )
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {"run_config_host_ssh": runner},
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        command = config_remote_backup_command(check)
+
+        self.assertIn(
+            "'/var/backups/archive/"
+            "last successful backup.txt'",
+            command,
+        )
+        self.assertIn(
+            "systemctl is-active -- archive-backup.timer",
+            command,
+        )
+        runner.assert_called_once_with(
+            check["remote_host"],
+            command,
+            timeout=15,
+        )
+        self.assertEqual(
+            statuses["remote-backup"]["label"],
+            "OK",
+        )
+
+    def test_remote_old_marker_is_old(self):
+        normalized = normalize_config_backup_checks(
+            [
+                self.check(
+                    systemd_timer=None,
+                    max_age_hours=24,
+                )
+            ],
+            [self.host()],
+        )
+        marker_epoch = datetime.now().timestamp() - (48 * 3600)
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        0,
+                        f"MTIME={marker_epoch}",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        self.assertEqual(
+            statuses["remote-backup"]["label"],
+            "OLD",
+        )
+
+    def test_remote_inactive_timer_is_warning(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+        marker_epoch = datetime.now().timestamp() - 3600
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        0,
+                        f"MTIME={marker_epoch}\nTIMER=inactive",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        self.assertEqual(
+            statuses["remote-backup"]["label"],
+            "WARNING",
+        )
+        self.assertIn(
+            "timer inactive",
+            statuses["remote-backup"]["raw"],
+        )
+
+    def test_remote_missing_marker_is_missing(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(44, "")
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        self.assertEqual(
+            statuses["remote-backup"]["label"],
+            "MISSING",
+        )
+
+    def test_remote_transport_failure_is_unknown(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(255, "Connection timed out")
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        status = statuses["remote-backup"]
+        self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["raw"], "Connection timed out")
+
+    def test_remote_stat_failure_is_unknown(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        45,
+                        "stat: Permission denied",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        status = statuses["remote-backup"]
+        self.assertEqual(status["label"], "UNKNOWN")
+        self.assertIn("Permission denied", status["raw"])
+
+    def test_remote_malformed_payload_is_unknown(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        0,
+                        "MTIME=not-a-timestamp\nTIMER=active",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_backup_checks(
+                normalized,
+            )
+
+        status = statuses["remote-backup"]
+        self.assertEqual(status["label"], "UNKNOWN")
+        self.assertIn(
+            "invalid remote marker timestamp",
+            status["raw"],
+        )
+
+    def test_ineligible_remote_check_remains_not_checked(self):
+        normalized = normalize_config_backup_checks(
+            [self.check()],
+            [
+                self.host(
+                    modules={"backup_status": False},
+                )
+            ],
+        )
+
+        statuses = collect_config_backup_checks(normalized)
+
+        self.assertEqual(
+            statuses["remote-backup"]["label"],
+            "NOT CHECKED",
+        )
 
 
 class ImageReferenceAliasTests(unittest.TestCase):
