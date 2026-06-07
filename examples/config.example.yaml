@@ -309,12 +309,19 @@ backup_checks:
 #
 # Current public-preview behavior:
 # - enabled relationships are shown in the Config Preview section
-# - complete replication relationships show CONFIGURED
+# - complete replication relationships begin as CONFIGURED
 # - missing source/target host information shows INCOMPLETE
 # - a live TrueNAS replication task can overlay the relationship status when:
 #   - source_host matches the monitored TrueNAS host
 #   - every configured dataset is present in the task source datasets
 #   - the task target equals or sits below target_prefix
+# - live snapshot tasks can overlay the same relationship only when every
+#   configured dataset is confidently covered:
+#   - an exact snapshot-task dataset always covers that dataset
+#   - an ancestor covers it only when recursive is explicitly true
+#   - TrueNAS exclude paths block the excluded dataset and its descendants
+#   - missing, malformed, partial, or ambiguous coverage does not propagate
+# - when snapshot and replication overlays both match, worst severity wins
 # - unmatched relationships keep their configuration-preview status
 # - overlays do not affect Overall Status or replace the reference checks
 #

@@ -1320,6 +1320,199 @@ def apply_config_protection_replication_overlay(
     return updated
 
 
+def config_snapshot_row_covers_dataset(
+    relationship,
+    row,
+    configured_dataset,
+):
+    if str(relationship.get("type") or "").lower() != "replication":
+        return False
+
+    source_host = str(relationship.get("source_host") or "")
+    row_host = str(row.get("host_id") or "")
+
+    if not source_host or row_host != source_host:
+        return False
+
+    if row.get("task_enabled") is None:
+        return False
+
+    configured_dataset = str(
+        configured_dataset or ""
+    ).strip().rstrip("/")
+    task_dataset = str(
+        row.get("dataset") or ""
+    ).strip().rstrip("/")
+
+    if (
+        not configured_dataset
+        or not task_dataset
+        or task_dataset == "-"
+    ):
+        return False
+
+    if configured_dataset == task_dataset:
+        return True
+
+    if row.get("recursive") is not True:
+        return False
+
+    exclusions = row.get("exclude")
+
+    if not isinstance(exclusions, list):
+        return False
+
+    if not configured_dataset.startswith(task_dataset + "/"):
+        return False
+
+    normalized_exclusions = []
+
+    for exclusion in exclusions:
+        if not isinstance(exclusion, str):
+            return False
+
+        normalized = exclusion.strip().rstrip("/")
+
+        if not normalized:
+            return False
+
+        if (
+            normalized != task_dataset
+            and not normalized.startswith(task_dataset + "/")
+        ):
+            return False
+
+        normalized_exclusions.append(normalized)
+
+    for exclusion in normalized_exclusions:
+        if (
+            configured_dataset == exclusion
+            or configured_dataset.startswith(exclusion + "/")
+        ):
+            return False
+
+    return True
+
+
+def apply_config_protection_snapshot_overlay(
+    relationships,
+    statuses,
+    snapshot_rows,
+):
+    updated = {
+        relationship_id: dict(status)
+        for relationship_id, status in statuses.items()
+    }
+    severity = {
+        "bad": 4,
+        "warning": 3,
+        "info": 2,
+        "disabled": 2,
+        "ok": 1,
+    }
+    overlay_css = {
+        "bad",
+        "warning",
+        "disabled",
+        "ok",
+    }
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        current = updated.get(
+            relationship_id,
+            {"label": "UNKNOWN", "css": "info", "raw": "-"},
+        )
+
+        if current.get("label") in {"INCOMPLETE", "NOT CHECKED"}:
+            continue
+
+        configured_datasets = []
+
+        for dataset in relationship.get("datasets") or []:
+            normalized = str(dataset).strip().rstrip("/")
+
+            if normalized and normalized not in configured_datasets:
+                configured_datasets.append(normalized)
+
+        if not configured_datasets:
+            continue
+
+        selected_rows = []
+
+        for configured_dataset in configured_datasets:
+            matches = [
+                row
+                for row in snapshot_rows
+                if config_snapshot_row_covers_dataset(
+                    relationship,
+                    row,
+                    configured_dataset,
+                )
+            ]
+
+            if not matches:
+                selected_rows = []
+                break
+
+            selected_rows.append((
+                configured_dataset,
+                max(
+                    matches,
+                    key=lambda row: severity.get(
+                        row.get("css", "info"),
+                        2,
+                    ),
+                ),
+            ))
+
+        if not selected_rows:
+            continue
+
+        selected_dataset, selected = max(
+            selected_rows,
+            key=lambda item: severity.get(
+                item[1].get("css", "info"),
+                2,
+            ),
+        )
+        label = selected.get("label", "UNKNOWN")
+        css = selected.get("css", "info")
+
+        if css not in overlay_css:
+            continue
+
+        current_css = current.get("css", "info")
+        current_severity = severity.get(current_css, 2)
+        selected_severity = severity.get(css, 2)
+
+        if (
+            current.get("label") != "CONFIGURED"
+            and selected_severity <= current_severity
+        ):
+            continue
+
+        task_dataset = selected.get("dataset") or "snapshot task"
+        raw = selected.get("raw", "-")
+        dataset_word = (
+            "dataset"
+            if len(configured_datasets) == 1
+            else "datasets"
+        )
+
+        updated[relationship_id] = {
+            "label": label,
+            "css": css,
+            "raw": (
+                f"live snapshots · {len(configured_datasets)} "
+                f"{dataset_word} covered · {selected_dataset} via "
+                f"{task_dataset}: {raw}"
+            ),
+        }
+
+    return updated
+
+
 def build_config_protection_preview(relationships, statuses):
     if not relationships:
         return ""
@@ -1507,6 +1700,28 @@ def collect_config_truenas_snapshot_checks(hosts):
             )
             task_enabled = bool(task.get("enabled", True))
 
+            recursive = task.get("recursive")
+
+            if not isinstance(recursive, bool):
+                recursive = None
+
+            exclude_value = task.get("exclude")
+
+            if (
+                isinstance(exclude_value, list)
+                and all(
+                    isinstance(item, str)
+                    for item in exclude_value
+                )
+            ):
+                exclude = [
+                    item.strip().rstrip("/")
+                    for item in exclude_value
+                    if item.strip().rstrip("/")
+                ]
+            else:
+                exclude = None
+
             latest_name = None
             latest_dt = None
 
@@ -1535,6 +1750,8 @@ def collect_config_truenas_snapshot_checks(hosts):
                 "host_name": host_name,
                 "dataset": dataset,
                 "task_enabled": task_enabled,
+                "recursive": recursive,
+                "exclude": exclude,
                 "label": label,
                 "css": css,
                 "latest": short_snapshot(latest_name),
@@ -4640,6 +4857,11 @@ config_protection_statuses = apply_config_protection_replication_overlay(
     config_protection_relationships,
     config_protection_statuses,
     config_truenas_replication_rows,
+)
+config_protection_statuses = apply_config_protection_snapshot_overlay(
+    config_protection_relationships,
+    config_protection_statuses,
+    config_truenas_snapshot_rows,
 )
 config_protection_preview_html = build_config_protection_preview(
     config_protection_relationships,
