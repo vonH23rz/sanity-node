@@ -29,6 +29,10 @@ FUNCTIONS_UNDER_TEST = {
     "normalize_config_remote_linux_docker_services",
     "run_config_host_ssh",
     "collect_config_remote_docker_services",
+    "config_percent",
+    "normalize_config_local_storage_checks",
+    "config_local_storage_status",
+    "collect_config_local_storage_checks",
     "config_image_reference_aliases",
     "apply_config_image_update_overlay",
     "configured_host_key",
@@ -137,6 +141,18 @@ run_config_host_ssh = FUNCTIONS[
 ]
 collect_config_remote_docker_services = FUNCTIONS[
     "collect_config_remote_docker_services"
+]
+config_percent = FUNCTIONS[
+    "config_percent"
+]
+normalize_config_local_storage_checks = FUNCTIONS[
+    "normalize_config_local_storage_checks"
+]
+config_local_storage_status = FUNCTIONS[
+    "config_local_storage_status"
+]
+collect_config_local_storage_checks = FUNCTIONS[
+    "collect_config_local_storage_checks"
 ]
 config_image_reference_aliases = FUNCTIONS[
     "config_image_reference_aliases"
@@ -655,6 +671,345 @@ class RemoteLinuxDockerRuntimeTests(unittest.TestCase):
             + shlex.quote(container_name),
         )
         self.assertEqual(calls[0][2], 15)
+
+
+
+class RemoteLinuxStorageRuntimeTests(unittest.TestCase):
+    def host(self, **overrides):
+        host = {
+            "id": "storage-node",
+            "enabled": True,
+            "display_name": "Storage Node",
+            "hostname": "storage-node",
+            "address": "192.168.1.40",
+            "type": "linux",
+            "ssh": {
+                "enabled": True,
+                "user": "monitor",
+                "key_file": "/app/ssh/storage-node",
+            },
+            "modules": {
+                "local_storage": True,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    def check(self, **overrides):
+        check = {
+            "id": "remote-archive",
+            "host": "storage-node",
+            "mount": "/mnt/archive",
+            "label": "Remote Archive",
+            "warning_percent": 80,
+            "critical_percent": 90,
+        }
+        check.update(overrides)
+        return check
+
+    def test_normalizer_selects_eligible_remote_linux_check(self):
+        checks = normalize_config_local_storage_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(
+            checks[0]["remote_host"],
+            {
+                "id": "storage-node",
+                "display_name": "Storage Node",
+                "address": "192.168.1.40",
+                "ssh_user": "monitor",
+                "ssh_key_file": "/app/ssh/storage-node",
+            },
+        )
+
+    def test_normalizer_rejects_ineligible_remote_hosts(self):
+        cases = [
+            (
+                "collector",
+                self.host(id="collector"),
+            ),
+            (
+                "disabled",
+                self.host(enabled=False),
+            ),
+            (
+                "truenas",
+                self.host(type="truenas"),
+            ),
+            (
+                "module-disabled",
+                self.host(modules={"local_storage": False}),
+            ),
+            (
+                "missing-address",
+                self.host(address=""),
+            ),
+            (
+                "ssh-disabled",
+                self.host(
+                    ssh={
+                        "enabled": False,
+                        "user": "monitor",
+                        "key_file": "/app/ssh/storage-node",
+                    },
+                ),
+            ),
+            (
+                "missing-user",
+                self.host(
+                    ssh={
+                        "enabled": True,
+                        "user": "",
+                        "key_file": "/app/ssh/storage-node",
+                    },
+                ),
+            ),
+            (
+                "missing-key",
+                self.host(
+                    ssh={
+                        "enabled": True,
+                        "user": "monitor",
+                        "key_file": "",
+                    },
+                ),
+            ),
+        ]
+
+        for name, host in cases:
+            with self.subTest(name=name):
+                check = self.check(host=host["id"])
+                normalized = normalize_config_local_storage_checks(
+                    [check],
+                    [host],
+                )
+
+                self.assertEqual(len(normalized), 1)
+                self.assertNotIn("remote_host", normalized[0])
+
+    def test_collector_local_df_behavior_is_preserved(self):
+        normalized = normalize_config_local_storage_checks(
+            [
+                self.check(
+                    id="root",
+                    host="collector",
+                    mount="/",
+                    label="Root",
+                )
+            ],
+            [],
+        )
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "Filesystem 1024-blocks Used Available Capacity "
+                "Mounted on\n"
+                "/dev/sda1 1000 420 580 42% /\n"
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(
+            subprocess,
+            "run",
+            return_value=result,
+        ) as run:
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        run.assert_called_once_with(
+            ["df", "-P", "/"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(statuses["root"]["label"], "OK")
+        self.assertEqual(statuses["root"]["used_percent"], 42)
+
+    def test_remote_collector_uses_host_ssh_and_quotes_mount(self):
+        normalized = normalize_config_local_storage_checks(
+            [
+                self.check(
+                    mount="/mnt/archive disk",
+                )
+            ],
+            [self.host()],
+        )
+        runner = mock.Mock(
+            return_value=(
+                0,
+                (
+                    "Filesystem 1024-blocks Used Available Capacity "
+                    "Mounted on\n"
+                    "/dev/sdb1 1000 420 580 42% "
+                    "/mnt/archive disk"
+                ),
+            )
+        )
+
+        with mock.patch.dict(
+            collect_config_local_storage_checks.__globals__,
+            {"run_config_host_ssh": runner},
+        ):
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        runner.assert_called_once_with(
+            normalized[0]["remote_host"],
+            "df -P '/mnt/archive disk'",
+            timeout=15,
+        )
+        self.assertEqual(
+            statuses["remote-archive"]["label"],
+            "OK",
+        )
+        self.assertEqual(
+            statuses["remote-archive"]["used_percent"],
+            42,
+        )
+
+    def test_remote_collector_applies_storage_thresholds(self):
+        normalized = normalize_config_local_storage_checks(
+            [
+                self.check(
+                    id="warning",
+                    mount="/mnt/warning",
+                ),
+                self.check(
+                    id="critical",
+                    mount="/mnt/critical",
+                ),
+            ],
+            [self.host()],
+        )
+        runner = mock.Mock(
+            side_effect=[
+                (
+                    0,
+                    (
+                        "Filesystem 1024-blocks Used Available "
+                        "Capacity Mounted on\n"
+                        "/dev/sdb1 1000 800 200 80% /mnt/warning"
+                    ),
+                ),
+                (
+                    0,
+                    (
+                        "Filesystem 1024-blocks Used Available "
+                        "Capacity Mounted on\n"
+                        "/dev/sdc1 1000 900 100 90% /mnt/critical"
+                    ),
+                ),
+            ]
+        )
+
+        with mock.patch.dict(
+            collect_config_local_storage_checks.__globals__,
+            {"run_config_host_ssh": runner},
+        ):
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        self.assertEqual(statuses["warning"]["label"], "WARNING")
+        self.assertEqual(statuses["warning"]["css"], "warning")
+        self.assertEqual(statuses["critical"]["label"], "CRITICAL")
+        self.assertEqual(statuses["critical"]["css"], "bad")
+
+    def test_remote_collector_reports_missing_mount(self):
+        normalized = normalize_config_local_storage_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_local_storage_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        1,
+                        "df: /mnt/archive: No such file or directory",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        status = statuses["remote-archive"]
+        self.assertEqual(status["label"], "MISSING")
+        self.assertEqual(status["css"], "bad")
+
+    def test_remote_collector_reports_transport_failure(self):
+        normalized = normalize_config_local_storage_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_local_storage_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(255, "Connection timed out")
+                )
+            },
+        ):
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        status = statuses["remote-archive"]
+        self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["css"], "info")
+        self.assertEqual(status["raw"], "Connection timed out")
+
+    def test_remote_collector_reports_malformed_df_output(self):
+        normalized = normalize_config_local_storage_checks(
+            [self.check()],
+            [self.host()],
+        )
+
+        with mock.patch.dict(
+            collect_config_local_storage_checks.__globals__,
+            {
+                "run_config_host_ssh": mock.Mock(
+                    return_value=(
+                        0,
+                        "Filesystem 1024-blocks Used\ninvalid",
+                    )
+                )
+            },
+        ):
+            statuses = collect_config_local_storage_checks(
+                normalized,
+            )
+
+        status = statuses["remote-archive"]
+        self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["css"], "info")
+        self.assertEqual(status["raw"], "invalid")
+
+    def test_ineligible_remote_check_remains_not_checked(self):
+        normalized = normalize_config_local_storage_checks(
+            [self.check()],
+            [
+                self.host(
+                    modules={"local_storage": False},
+                )
+            ],
+        )
+
+        statuses = collect_config_local_storage_checks(normalized)
+
+        status = statuses["remote-archive"]
+        self.assertEqual(status["label"], "NOT CHECKED")
+        self.assertEqual(status["css"], "info")
 
 
 class ImageReferenceAliasTests(unittest.TestCase):

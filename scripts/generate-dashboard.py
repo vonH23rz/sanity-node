@@ -975,7 +975,59 @@ def config_percent(value, default):
         return default
 
 
-def normalize_config_local_storage_checks(checks):
+def normalize_config_local_storage_checks(checks, hosts=None):
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+    eligible_remote_hosts = {}
+
+    for host in enabled_items(hosts or []):
+        if not isinstance(host, dict):
+            continue
+
+        host_id = str(host.get("id") or "")
+
+        if (
+            not host_id
+            or host_id in (collector_id, "collector")
+            or str(host.get("type") or "").lower() != "linux"
+        ):
+            continue
+
+        modules = host.get("modules") or {}
+
+        if (
+            not isinstance(modules, dict)
+            or modules.get("local_storage") is not True
+        ):
+            continue
+
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+
+        if (
+            not address
+            or not isinstance(ssh, dict)
+            or ssh.get("enabled") is not True
+        ):
+            continue
+
+        ssh_user = str(ssh.get("user") or "").strip()
+        ssh_key_file = str(ssh.get("key_file") or "").strip()
+
+        if not ssh_user or not ssh_key_file:
+            continue
+
+        eligible_remote_hosts[host_id] = {
+            "id": host_id,
+            "display_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "address": address,
+            "ssh_user": ssh_user,
+            "ssh_key_file": ssh_key_file,
+        }
+
     normalized = []
 
     for index, check in enumerate(checks, start=1):
@@ -983,22 +1035,107 @@ def normalize_config_local_storage_checks(checks):
             continue
 
         mount = check.get("mount")
+
         if not mount:
             continue
 
+        host_id = str(check.get("host") or "")
+        mount = str(mount)
         label = check.get("label") or mount
-        check_id = check.get("id") or f"config-local-storage-{index}-{config_service_safe_name(label)}"
+        check_id = (
+            check.get("id")
+            or
+            f"config-local-storage-{index}-"
+            f"{config_service_safe_name(label)}"
+        )
 
-        normalized.append({
+        normalized_check = {
             "id": str(check_id),
-            "host": check.get("host"),
-            "mount": str(mount),
+            "host": host_id,
+            "mount": mount,
             "label": str(label),
-            "warning_percent": config_percent(check.get("warning_percent"), 80),
-            "critical_percent": config_percent(check.get("critical_percent"), 90),
-        })
+            "warning_percent": config_percent(
+                check.get("warning_percent"),
+                80,
+            ),
+            "critical_percent": config_percent(
+                check.get("critical_percent"),
+                90,
+            ),
+        }
+
+        remote_host = eligible_remote_hosts.get(host_id)
+
+        if remote_host:
+            normalized_check["remote_host"] = remote_host
+
+        normalized.append(normalized_check)
 
     return normalized
+
+
+def config_local_storage_status(check, output):
+    lines = [
+        line
+        for line in str(output or "").strip().splitlines()
+        if line.strip()
+    ]
+
+    if len(lines) < 2:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": "unexpected df output",
+        }
+
+    data_line = lines[-1]
+    parts = data_line.split()
+
+    if len(parts) < 5:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": data_line,
+        }
+
+    size = parts[1]
+    used = parts[2]
+    available = parts[3]
+    percent_raw = parts[4].rstrip("%")
+
+    try:
+        used_percent = int(percent_raw)
+    except ValueError:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": data_line,
+        }
+
+    if used_percent >= check["critical_percent"]:
+        label = "CRITICAL"
+        css = "bad"
+    elif used_percent >= check["warning_percent"]:
+        label = "WARNING"
+        css = "warning"
+    else:
+        label = "OK"
+        css = "ok"
+
+    return {
+        "label": label,
+        "css": css,
+        "raw": (
+            f"{used_percent}% used · "
+            f"{used} used · "
+            f"{available} available · "
+            f"{size} total"
+        ),
+        "used_percent": used_percent,
+        "used": used,
+        "available": available,
+        "size": size,
+    }
 
 
 def collect_config_local_storage_checks(checks):
@@ -1009,71 +1146,81 @@ def collect_config_local_storage_checks(checks):
         check_id = check["id"]
         host_id = str(check.get("host") or "")
         mount = check["mount"]
+        remote_host = check.get("remote_host")
 
-        if host_id not in (collector_id, "collector"):
+        if host_id in (collector_id, "collector"):
+            try:
+                result = subprocess.run(
+                    ["df", "-P", mount],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except Exception as e:
+                statuses[check_id] = {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": str(e),
+                }
+                continue
+
+            if result.returncode != 0:
+                output = (
+                    result.stdout
+                    +
+                    result.stderr
+                ).strip()
+                statuses[check_id] = {
+                    "label": "MISSING",
+                    "css": "bad",
+                    "raw": output,
+                }
+                continue
+
+            statuses[check_id] = config_local_storage_status(
+                check,
+                result.stdout,
+            )
+            continue
+
+        if not remote_host:
             statuses[check_id] = {
                 "label": "NOT CHECKED",
                 "css": "info",
-                "raw": "local storage checks are active for the collector node only",
+                "raw": (
+                    "local storage checks require the collector "
+                    "or an eligible remote Linux host"
+                ),
             }
             continue
 
-        try:
-            result = subprocess.run(
-                ["df", "-P", mount],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-        except Exception as e:
-            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": str(e)}
+        command = "df -P " + shlex.quote(mount)
+        returncode, output = run_config_host_ssh(
+            remote_host,
+            command,
+            timeout=15,
+        )
+
+        if returncode is None or returncode == 255:
+            statuses[check_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": output or "remote df query failed",
+            }
             continue
 
-        if result.returncode != 0:
-            output = (result.stdout + result.stderr).strip()
-            statuses[check_id] = {"label": "MISSING", "css": "bad", "raw": output}
+        if returncode != 0:
+            statuses[check_id] = {
+                "label": "MISSING",
+                "css": "bad",
+                "raw": output or "mount not found",
+            }
             continue
 
-        lines = result.stdout.strip().splitlines()
-        if len(lines) < 2:
-            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": "unexpected df output"}
-            continue
-
-        parts = lines[1].split()
-        if len(parts) < 5:
-            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": lines[1]}
-            continue
-
-        size = parts[1]
-        used = parts[2]
-        available = parts[3]
-        percent_raw = parts[4].rstrip("%")
-
-        try:
-            used_percent = int(percent_raw)
-        except ValueError:
-            statuses[check_id] = {"label": "UNKNOWN", "css": "info", "raw": lines[1]}
-            continue
-
-        if used_percent >= check["critical_percent"]:
-            label = "CRITICAL"
-            css = "bad"
-        elif used_percent >= check["warning_percent"]:
-            label = "WARNING"
-            css = "warning"
-        else:
-            label = "OK"
-            css = "ok"
-
-        statuses[check_id] = {
-            "label": label,
-            "css": css,
-            "raw": f"{used_percent}% used · {used} used · {available} available · {size} total",
-            "used_percent": used_percent,
-            "used": used,
-            "available": available,
-            "size": size,
-        }
+        statuses[check_id] = config_local_storage_status(
+            check,
+            output,
+        )
 
     return statuses
 
@@ -1110,7 +1257,7 @@ def build_config_local_storage_preview(checks, statuses):
       </div>
       <div class="configured-hosts-meta">{h(len(checks))} checks</div>
     </div>
-    <p class="muted-small">Collector-local df checks are active. Local storage checks for other hosts are shown as NOT CHECKED for now.</p>
+    <p class="muted-small">Collector-local and eligible remote Linux df checks are active. Ineligible remote checks remain NOT CHECKED.</p>
     <table>
       <tr>
         <th>Status</th>
@@ -5020,7 +5167,10 @@ if config_image_update_sources:
         f"{sum(int(row.get('updates') or 0) for row in config_image_update_rows)}"
     )
 
-config_local_storage_checks = normalize_config_local_storage_checks(CONFIG_ENABLED_LOCAL_STORAGE)
+config_local_storage_checks = normalize_config_local_storage_checks(
+    CONFIG_ENABLED_LOCAL_STORAGE,
+    CONFIG_HOSTS,
+)
 config_local_storage_statuses = collect_config_local_storage_checks(config_local_storage_checks)
 config_local_storage_preview_html = build_config_local_storage_preview(
     config_local_storage_checks,
