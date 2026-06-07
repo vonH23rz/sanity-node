@@ -317,7 +317,15 @@ The preview reports tracked images or apps, available updates, and update detail
 
 Diun sources require a metrics URL. TrueNAS sources require an enabled `type: truenas` host with working SSH access.
 
-Image update results do not affect service cards or Overall Status yet.
+Image-update results can overlay healthy configuration-driven services:
+
+- collector-local Docker services are matched using the image reference returned by `docker inspect`
+- configured TrueNAS app services are matched using their `app_id`
+- only an existing `UP` service can become `UPDATE`
+- existing `DOWN`, `MISSING`, `UNKNOWN`, and `NOT CHECKED` states always take precedence
+- the Services summary counts `UPDATE` separately from `UP`, `DOWN`, and other informational states
+
+Update overlays remain informational. They do not affect Overall Status, and they do not modify the original hardcoded service cards.
 
 ### `summary_cards`
 

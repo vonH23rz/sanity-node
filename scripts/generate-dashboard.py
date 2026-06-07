@@ -312,9 +312,14 @@ def collect_config_docker_services(services):
             errors.append(f"{service_id}: {output}")
             continue
 
+        image_ref = None
+
         try:
             payload = json.loads(result.stdout)
-            state = payload[0].get("State", {})
+            container = payload[0]
+            state = container.get("State", {})
+            config = container.get("Config", {})
+            image_ref = config.get("Image")
             raw_state = "RUNNING" if state.get("Running") else state.get("Status")
             label, css = service_label_from_state(raw_state, exists=True)
         except Exception as e:
@@ -322,7 +327,12 @@ def collect_config_docker_services(services):
             label, css = "UNKNOWN", "info"
             errors.append(f"{service_id}: Docker inspect parse error: {e}")
 
-        statuses[service_id] = {"label": label, "css": css, "raw": raw_state}
+        statuses[service_id] = {
+            "label": label,
+            "css": css,
+            "raw": raw_state,
+            "image": image_ref,
+        }
 
     return statuses, errors
 
@@ -711,6 +721,7 @@ def build_service_summary(services, statuses):
 
     up_count = 0
     down_count = 0
+    update_count = 0
     info_count = 0
     detail_html = ""
 
@@ -722,6 +733,8 @@ def build_service_summary(services, statuses):
 
         if label == "UP":
             up_count += 1
+        elif label == "UPDATE":
+            update_count += 1
         elif css == "bad":
             down_count += 1
         else:
@@ -744,12 +757,15 @@ def build_service_summary(services, statuses):
 
     value = f"{app_count} Apps · {helper_count} Helpers · {up_count} UP · {down_count} DOWN"
 
+    if update_count:
+        value += f" · {update_count} UPDATE"
+
     if info_count:
         value += f" · {info_count} INFO"
 
     if down_count:
         card_css = "bad"
-    elif info_count:
+    elif update_count or info_count:
         card_css = "info"
     else:
         card_css = ""
@@ -761,6 +777,7 @@ def build_service_summary(services, statuses):
         "css": card_css,
         "up": up_count,
         "down": down_count,
+        "update": update_count,
         "info": info_count,
     }
 
@@ -2038,6 +2055,7 @@ def collect_config_diun_image_updates(source):
         "errors": errors,
         "version": version or "-",
         "details": sorted(update_images),
+        "update_images": sorted(update_images),
         "raw": raw,
     }, None
 
@@ -2094,6 +2112,7 @@ def collect_config_truenas_image_updates(source):
         if isinstance(app, dict)
     ]
     update_details = []
+    update_apps = []
 
     for app in sorted(
         app_items,
@@ -2111,6 +2130,7 @@ def collect_config_truenas_image_updates(source):
             update_types.append("image")
 
         if update_types:
+            update_apps.append(name)
             update_details.append(
                 f"{name} ({', '.join(update_types)})"
             )
@@ -2140,6 +2160,7 @@ def collect_config_truenas_image_updates(source):
         "errors": 0,
         "version": "-",
         "details": update_details,
+        "update_apps": update_apps,
         "raw": raw,
     }, None
 
@@ -2164,6 +2185,108 @@ def collect_config_image_update_checks(sources):
             errors.append(error)
 
     return rows, errors
+
+
+def config_image_reference_aliases(value):
+    reference = str(value or "").strip().lower()
+
+    if not reference:
+        return set()
+
+    reference = reference.split("@", 1)[0]
+    last_slash = reference.rfind("/")
+    last_colon = reference.rfind(":")
+
+    if last_colon > last_slash:
+        reference = reference[:last_colon]
+
+    aliases = {reference}
+
+    for prefix in ("docker.io/", "index.docker.io/"):
+        if not reference.startswith(prefix):
+            continue
+
+        docker_hub_reference = reference[len(prefix):]
+        aliases.add(docker_hub_reference)
+
+        if docker_hub_reference.startswith("library/"):
+            aliases.add(docker_hub_reference[len("library/"):])
+
+    if reference.startswith("library/"):
+        aliases.add(reference[len("library/"):])
+
+    return {alias for alias in aliases if alias}
+
+
+def apply_config_image_update_overlay(services, statuses, update_rows):
+    overlaid_statuses = {
+        service_id: dict(status)
+        for service_id, status in statuses.items()
+    }
+
+    diun_updates_by_host = {}
+    truenas_updates_by_host = {}
+
+    for row in update_rows:
+        host_id = str(row.get("host_id") or "")
+        provider = row.get("provider")
+
+        if provider == "diun":
+            image_aliases = diun_updates_by_host.setdefault(host_id, set())
+
+            for image in row.get("update_images") or []:
+                image_aliases.update(config_image_reference_aliases(image))
+
+        elif provider == "truenas":
+            app_names = truenas_updates_by_host.setdefault(host_id, set())
+
+            for app_name in row.get("update_apps") or []:
+                app_names.add(str(app_name).strip().lower())
+
+    overlay_count = 0
+
+    for service in services:
+        service_id = service["id"]
+        current = overlaid_statuses.get(service_id)
+
+        # Existing unhealthy, missing, unknown, and unchecked states always win.
+        if not current or current.get("label") != "UP":
+            continue
+
+        host_id = str(service.get("host") or "")
+        check_type = service.get("check")
+        update_detail = None
+
+        if check_type == "docker":
+            service_image = current.get("image")
+            service_aliases = config_image_reference_aliases(service_image)
+            update_aliases = diun_updates_by_host.get(host_id, set())
+
+            if service_aliases and service_aliases.intersection(update_aliases):
+                update_detail = str(service_image or service_id)
+
+        elif check_type == "truenas_app":
+            app_id = str(
+                service.get("app_id")
+                or service_id
+            ).strip().lower()
+
+            if app_id in truenas_updates_by_host.get(host_id, set()):
+                update_detail = app_id
+
+        if not update_detail:
+            continue
+
+        previous_raw = current.get("raw") or "healthy"
+        overlaid_statuses[service_id] = {
+            **current,
+            "label": "UPDATE",
+            "css": "info",
+            "raw": f"{previous_raw}; update available for {update_detail}",
+        }
+        overlay_count += 1
+
+    return overlaid_statuses, overlay_count
 
 
 def build_config_image_update_preview(rows):
@@ -2224,7 +2347,7 @@ def build_config_image_update_preview(rows):
       </div>
       <div class="configured-hosts-meta">{h(source_count)} {h(source_word)} · {h(update_count)} {h(update_word)}</div>
     </div>
-    <p class="muted-small">Diun metrics and TrueNAS-native app update fields are checked per configured source. These preview results do not affect service status cards or Overall Status yet.</p>
+    <p class="muted-small">Diun metrics and TrueNAS-native app update fields are checked per configured source. Healthy configured Docker and TrueNAS app services can be shown as UPDATE. Existing unhealthy states take precedence, and update overlays do not affect Overall Status.</p>
     <table>
       <tr>
         <th>Status</th>
@@ -2994,7 +3117,7 @@ def temp_badge(label, css):
 def status_text_class(label):
     if label in ("OK", "FINISHED", "SUCCESS", "YES", "ONLINE", "UP"):
         return "ok-text"
-    if label in ("INFO", "PENDING", "RUNNING", "UNKNOWN", "NOT CHECKED"):
+    if label in ("INFO", "UPDATE", "PENDING", "RUNNING", "UNKNOWN", "NOT CHECKED"):
         return "info-text"
     if label in ("WARNING", "OLD", "DIFFERENT"):
         return "warning-text"
@@ -4248,6 +4371,20 @@ public_summary_statuses = build_config_summary_statuses(
     config_docker_statuses,
     config_truenas_app_statuses,
 )
+public_summary_statuses, config_service_update_overlay_count = (
+    apply_config_image_update_overlay(
+        public_summary_services,
+        public_summary_statuses,
+        config_image_update_rows,
+    )
+)
+
+if config_service_update_overlay_count:
+    print(
+        "Configured service update overlays applied: "
+        f"{config_service_update_overlay_count}"
+    )
+
 public_summary_preview_html = build_public_host_summary_preview(
     CONFIG_HOSTS,
     public_summary_services,
