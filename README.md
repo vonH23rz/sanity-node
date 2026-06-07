@@ -239,14 +239,16 @@ Current Phase 2 public-preview behavior:
 - all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
 - replication relationships can inherit live task status when source host, configured datasets, and target prefix confidently match a discovered TrueNAS replication task
+- replication relationships can also inherit live snapshot status when every configured dataset is confidently covered by an exact snapshot task or an explicitly recursive ancestor task
+- recursive snapshot coverage respects TrueNAS exclusion paths; missing, malformed, partial, or ambiguous coverage leaves the relationship unchanged
+- snapshot and replication overlays combine using worst-severity precedence, while a live `OK` relationship still counts as configured
 - unmatched or incomplete relationships retain their configuration-preview status instead of being treated as failures
 - configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
 - when the four-card Services summary is active, host-based cards retain their service counts but show only non-`UP` service exceptions; fully healthy hosts show one `ALL UP` line
 - when the Services summary is disabled, host-based cards retain the full per-service detail list
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
-- live replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference replication checks
-- snapshot results remain separate from configured protection relationships for now
+- live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference checks
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 ### TrueNAS snapshot checks
@@ -273,7 +275,11 @@ For each matching host, Sanity Node:
 - distinguishes enabled, disabled, missing, old, and fresh tasks
 - respects TrueNAS `allow_empty: false` behavior when no dataset changes have occurred
 
-The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The current preview uses the configured Sanity Node SSH credentials. Snapshot preview results do not affect Overall Status yet, and the original hardcoded snapshot cards remain untouched.
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The current preview uses the configured Sanity Node SSH credentials.
+
+Configured replication relationships can use these live snapshot rows as a precondition overlay. Every configured relationship dataset must be confidently covered. An exact task dataset always qualifies. An ancestor task qualifies only when `recursive` is explicitly `true`, the configured dataset is below that task dataset on a dataset boundary, and no TrueNAS exclusion equals or contains the configured dataset. Missing or malformed recursion/exclusion metadata, partial coverage, and collector failures do not convert an unmatched relationship into a warning or failure.
+
+Snapshot preview and Protection-overlay results do not affect Overall Status, and the original hardcoded snapshot cards remain untouched.
 
 ### TrueNAS replication checks
 
@@ -302,6 +308,8 @@ For each matching host, Sanity Node:
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
 
 Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configuration-preview status.
+
+When both snapshot and replication overlays match the same relationship, Sanity Node keeps the worst live severity. A snapshot warning can therefore override healthy replication, while an existing replication failure is not hidden by healthy snapshots.
 
 ### Image update monitoring
 
@@ -367,7 +375,7 @@ To avoid rendering the same complete service inventory twice, host-based cards u
 
 The Systems card normally reflects each enabled host's Web UI check. When all configured TrueNAS app checks for a host are `UNKNOWN` because of a recognized SSH or network timeout, that host is instead shown as `UNREACHABLE` and counted as `DOWN`. Authentication failures, host-key failures, connection refusal, parsing errors, partial app success, Linux hosts, and HTTP-only hosts retain the existing Web UI-based Systems status.
 
-The Protection card normally reflects configuration completeness. Confidently matched live replication tasks can replace `CONFIGURED` with their current live status. A live `OK` relationship still counts as configured; warning and failure states retain their normal severity precedence.
+The Protection card normally reflects configuration completeness. Confidently matched live replication tasks and complete snapshot coverage can replace `CONFIGURED` with their current live status. Every configured dataset must be covered before snapshot status propagates. When both live sources match, the worst severity wins. A live `OK` relationship still counts as configured.
 
 These propagations are preview-only and do not affect Overall Status or the original hardcoded summary cards.
 
@@ -449,6 +457,7 @@ The current tests protect:
 - date parsing and formatting, snapshot inventory SSH/error handling, inventory row parsing, latest-snapshot selection, and replication metadata helpers
 - assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
 - protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
+- protection-to-snapshot matching, exact and recursive dataset coverage, exclusion handling, complete-coverage requirements, metadata retention, and snapshot/replication worst-severity precedence
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 
@@ -510,7 +519,7 @@ Planned improvements:
 - configuration-driven services
 - configuration-driven local storage checks
 - configuration-driven backup checks
-- live validation for configuration-driven protection relationships
+- additional protection relationship types beyond replication
 - Docker Compose runtime
 - `.env.example`
 - Dockerfile

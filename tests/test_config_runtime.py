@@ -45,6 +45,8 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_four_card_summary_preview",
     "config_replication_row_matches_relationship",
     "apply_config_protection_replication_overlay",
+    "config_snapshot_row_covers_dataset",
+    "apply_config_protection_snapshot_overlay",
     "build_config_truenas_snapshot_preview",
     "build_config_truenas_replication_preview",
     "freshness_status",
@@ -162,6 +164,12 @@ config_replication_row_matches_relationship = FUNCTIONS[
 ]
 apply_config_protection_replication_overlay = FUNCTIONS[
     "apply_config_protection_replication_overlay"
+]
+config_snapshot_row_covers_dataset = FUNCTIONS[
+    "config_snapshot_row_covers_dataset"
+]
+apply_config_protection_snapshot_overlay = FUNCTIONS[
+    "apply_config_protection_snapshot_overlay"
 ]
 build_config_truenas_snapshot_preview = FUNCTIONS[
     "build_config_truenas_snapshot_preview"
@@ -2581,6 +2589,452 @@ class ReplicationPreviewRenderingTests(unittest.TestCase):
         self.assertIn(">FAILED</span>", preview)
         self.assertIn(">CRITICAL</span>", preview)
         self.assertIn("replication query failed", preview)
+
+
+class ProtectionSnapshotOverlayTests(unittest.TestCase):
+    def setUp(self):
+        self.relationship = {
+            "id": "t620-to-t330",
+            "name": "T620 to T330",
+            "type": "replication",
+            "source_host": "t620",
+            "target_host": "t330",
+            "target_prefix": "backup/t620/zfs-replication",
+            "datasets": [
+                "tank/stacks",
+                "tank/configs",
+            ],
+        }
+        self.statuses = {
+            "t620-to-t330": {
+                "label": "CONFIGURED",
+                "css": "info",
+                "raw": "replication preview",
+            }
+        }
+
+    def row(
+        self,
+        dataset,
+        *,
+        host_id="t620",
+        task_enabled=True,
+        recursive=False,
+        exclude=None,
+        label="OK",
+        css="ok",
+        raw="snapshot current",
+    ):
+        if exclude is None:
+            exclude = []
+
+        return {
+            "host_id": host_id,
+            "host_name": "T620 TrueNAS",
+            "dataset": dataset,
+            "task_enabled": task_enabled,
+            "recursive": recursive,
+            "exclude": exclude,
+            "label": label,
+            "css": css,
+            "latest": "auto-test",
+            "latest_time": "2026-06-07 00:00",
+            "raw": raw,
+        }
+
+    def test_exact_dataset_match_does_not_require_recursive_metadata(self):
+        row = dict(
+            self.row(
+                "tank/stacks/",
+                recursive=None,
+            ),
+            exclude=None,
+        )
+
+        self.assertTrue(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                row,
+                "tank/stacks/",
+            )
+        )
+
+        disabled = dict(
+            self.row(
+                "tank/stacks",
+                task_enabled=False,
+                recursive=None,
+                label="DISABLED",
+                css="disabled",
+            ),
+            exclude=None,
+        )
+
+        self.assertTrue(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                disabled,
+                "tank/stacks",
+            )
+        )
+
+    def test_recursive_ancestor_matches_only_on_dataset_boundaries(self):
+        recursive = self.row(
+            "tank",
+            recursive=True,
+            exclude=[],
+        )
+
+        self.assertTrue(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                recursive,
+                "tank/stacks",
+            )
+        )
+        self.assertFalse(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                recursive,
+                "tanker/stacks",
+            )
+        )
+
+    def test_recursive_exclusions_block_excluded_dataset_and_children(self):
+        recursive = self.row(
+            "tank",
+            recursive=True,
+            exclude=["tank/stacks"],
+        )
+
+        self.assertFalse(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                recursive,
+                "tank/stacks",
+            )
+        )
+        self.assertFalse(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                recursive,
+                "tank/stacks/child",
+            )
+        )
+        self.assertTrue(
+            config_snapshot_row_covers_dataset(
+                self.relationship,
+                recursive,
+                "tank/configs",
+            )
+        )
+
+    def test_ambiguous_recursive_metadata_fails_closed(self):
+        candidates = (
+            self.row("tank", recursive=False, exclude=[]),
+            self.row("tank", recursive=None, exclude=[]),
+            dict(
+                self.row("tank", recursive=True),
+                exclude=None,
+            ),
+            self.row("tank", recursive=True, exclude="tank/stacks"),
+            self.row("tank", recursive=True, exclude=[""]),
+            self.row("tank", recursive=True, exclude=[123]),
+            self.row("tank", recursive=True, exclude=["stacks"]),
+            self.row("tank", recursive=True, exclude=["other/stacks"]),
+        )
+
+        for row in candidates:
+            with self.subTest(row=row):
+                self.assertFalse(
+                    config_snapshot_row_covers_dataset(
+                        self.relationship,
+                        row,
+                        "tank/stacks",
+                    )
+                )
+
+    def test_non_confident_candidates_do_not_match(self):
+        candidates = (
+            (
+                dict(self.relationship, type="backup"),
+                self.row("tank/stacks"),
+            ),
+            (
+                self.relationship,
+                self.row("tank/stacks", host_id="t330"),
+            ),
+            (
+                self.relationship,
+                self.row("tank/stacks", task_enabled=None),
+            ),
+            (
+                self.relationship,
+                self.row("-"),
+            ),
+        )
+
+        for relationship, row in candidates:
+            with self.subTest(relationship=relationship, row=row):
+                self.assertFalse(
+                    config_snapshot_row_covers_dataset(
+                        relationship,
+                        row,
+                        "tank/stacks",
+                    )
+                )
+
+    def test_all_configured_datasets_must_have_confident_coverage(self):
+        rows = [
+            self.row("tank/stacks"),
+            self.row("tank/configs"),
+        ]
+
+        updated = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            self.statuses,
+            rows,
+        )
+
+        status = updated["t620-to-t330"]
+
+        self.assertEqual(status["label"], "OK")
+        self.assertEqual(status["css"], "ok")
+        self.assertIn("2 datasets covered", status["raw"])
+
+        partial = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            self.statuses,
+            [self.row("tank/stacks")],
+        )
+
+        self.assertEqual(
+            partial["t620-to-t330"],
+            self.statuses["t620-to-t330"],
+        )
+
+    def test_recursive_task_can_cover_multiple_relationship_datasets(self):
+        updated = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            self.statuses,
+            [
+                self.row(
+                    "tank",
+                    recursive=True,
+                    exclude=[],
+                )
+            ],
+        )
+
+        status = updated["t620-to-t330"]
+
+        self.assertEqual(status["label"], "OK")
+        self.assertEqual(status["css"], "ok")
+        self.assertIn("2 datasets covered", status["raw"])
+        self.assertIn("via tank", status["raw"])
+
+    def test_snapshot_warning_overrides_live_replication_ok(self):
+        replication_ok = {
+            "t620-to-t330": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "live replication current",
+            }
+        }
+        rows = [
+            self.row("tank/stacks"),
+            self.row(
+                "tank/configs",
+                label="WARNING",
+                css="warning",
+                raw="latest snapshot is stale",
+            ),
+        ]
+
+        updated = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            replication_ok,
+            rows,
+        )
+
+        status = updated["t620-to-t330"]
+
+        self.assertEqual(status["label"], "WARNING")
+        self.assertEqual(status["css"], "warning")
+        self.assertIn("latest snapshot is stale", status["raw"])
+
+    def test_worst_existing_or_snapshot_severity_is_preserved(self):
+        replication_critical = {
+            "t620-to-t330": {
+                "label": "CRITICAL",
+                "css": "bad",
+                "raw": "replication failed",
+            }
+        }
+        warning_rows = [
+            self.row("tank/stacks"),
+            self.row(
+                "tank/configs",
+                label="WARNING",
+                css="warning",
+            ),
+        ]
+
+        preserved = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            replication_critical,
+            warning_rows,
+        )
+
+        self.assertEqual(
+            preserved["t620-to-t330"],
+            replication_critical["t620-to-t330"],
+        )
+
+        replication_warning = {
+            "t620-to-t330": {
+                "label": "WARNING",
+                "css": "warning",
+                "raw": "replication delayed",
+            }
+        }
+        critical_rows = [
+            self.row("tank/stacks"),
+            self.row(
+                "tank/configs",
+                label="CRITICAL",
+                css="bad",
+                raw="snapshot task failed",
+            ),
+        ]
+
+        overridden = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            replication_warning,
+            critical_rows,
+        )
+
+        self.assertEqual(
+            overridden["t620-to-t330"]["label"],
+            "CRITICAL",
+        )
+        self.assertIn(
+            "snapshot task failed",
+            overridden["t620-to-t330"]["raw"],
+        )
+
+    def test_unknown_snapshot_state_does_not_overlay_protection(self):
+        rows = [
+            self.row("tank/stacks"),
+            self.row(
+                "tank/configs",
+                label="UNKNOWN",
+                css="info",
+                raw="snapshot inventory query failed",
+            ),
+        ]
+
+        updated = apply_config_protection_snapshot_overlay(
+            [self.relationship],
+            self.statuses,
+            rows,
+        )
+
+        self.assertEqual(
+            updated["t620-to-t330"],
+            self.statuses["t620-to-t330"],
+        )
+
+    def test_incomplete_and_not_checked_relationships_are_preserved(self):
+        for label, css in (
+            ("INCOMPLETE", "warning"),
+            ("NOT CHECKED", "info"),
+        ):
+            statuses = {
+                "t620-to-t330": {
+                    "label": label,
+                    "css": css,
+                    "raw": "configuration preview status",
+                }
+            }
+
+            updated = apply_config_protection_snapshot_overlay(
+                [self.relationship],
+                statuses,
+                [
+                    self.row("tank/stacks"),
+                    self.row("tank/configs"),
+                ],
+            )
+
+            self.assertEqual(
+                updated["t620-to-t330"],
+                statuses["t620-to-t330"],
+            )
+
+    def test_snapshot_collector_retains_only_valid_coverage_metadata(self):
+        original_remote_json = FUNCTIONS.get("remote_json")
+        original_collect_snapshots = FUNCTIONS.get("collect_snapshots")
+
+        tasks = [
+            {
+                "dataset": "tank/apps",
+                "enabled": True,
+                "recursive": True,
+                "exclude": [
+                    "tank/apps/cache/",
+                    "tank/apps/tmp",
+                ],
+            },
+            {
+                "dataset": "tank/media",
+                "enabled": True,
+                "recursive": "yes",
+                "exclude": "tank/media/private",
+            },
+        ]
+
+        try:
+            FUNCTIONS["remote_json"] = (
+                lambda ip, command: (tasks, None)
+            )
+            FUNCTIONS["collect_snapshots"] = (
+                lambda ip: ({}, "snapshot inventory unavailable")
+            )
+
+            rows, errors = collect_config_truenas_snapshot_checks(
+                [
+                    {
+                        "id": "t620",
+                        "display_name": "T620 TrueNAS",
+                        "address": "192.168.30.10",
+                    }
+                ]
+            )
+        finally:
+            FUNCTIONS["remote_json"] = original_remote_json
+            FUNCTIONS["collect_snapshots"] = (
+                original_collect_snapshots
+            )
+
+        self.assertEqual(
+            errors,
+            ["t620: snapshot inventory unavailable"],
+        )
+        self.assertEqual(
+            [row["dataset"] for row in rows],
+            ["tank/apps", "tank/media"],
+        )
+        self.assertIs(rows[0]["recursive"], True)
+        self.assertEqual(
+            rows[0]["exclude"],
+            [
+                "tank/apps/cache",
+                "tank/apps/tmp",
+            ],
+        )
+        self.assertIsNone(rows[1]["recursive"])
+        self.assertIsNone(rows[1]["exclude"])
 
 
 class ProtectionReplicationOverlayTests(unittest.TestCase):
