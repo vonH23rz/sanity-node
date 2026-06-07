@@ -2,6 +2,7 @@
 
 import ast
 import html
+import re
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -57,6 +58,13 @@ FUNCTIONS_UNDER_TEST = {
     "previous_run",
     "normalize_config_truenas_snapshot_hosts",
     "normalize_config_truenas_replication_hosts",
+    "parse_datetime",
+    "fmt_dt",
+    "collect_snapshots",
+    "latest_snapshot",
+    "short_snapshot",
+    "replication_time",
+    "replication_state",
 }
 
 
@@ -86,6 +94,7 @@ def load_generator_functions():
 
     namespace = {
         "html": html,
+        "re": re,
         "datetime": datetime,
         "timedelta": timedelta,
         "CONFIG": {
@@ -189,6 +198,27 @@ normalize_config_truenas_snapshot_hosts = FUNCTIONS[
 ]
 normalize_config_truenas_replication_hosts = FUNCTIONS[
     "normalize_config_truenas_replication_hosts"
+]
+parse_datetime = FUNCTIONS[
+    "parse_datetime"
+]
+fmt_dt = FUNCTIONS[
+    "fmt_dt"
+]
+collect_snapshots = FUNCTIONS[
+    "collect_snapshots"
+]
+latest_snapshot = FUNCTIONS[
+    "latest_snapshot"
+]
+short_snapshot = FUNCTIONS[
+    "short_snapshot"
+]
+replication_time = FUNCTIONS[
+    "replication_time"
+]
+replication_state = FUNCTIONS[
+    "replication_state"
 ]
 
 
@@ -1257,6 +1287,202 @@ class PreviousRunTests(unittest.TestCase):
         self.assertEqual(
             result,
             datetime(2026, 6, 7, 23, 55),
+        )
+
+
+class DateTimeHelperTests(unittest.TestCase):
+    def test_none_and_invalid_values_return_none(self):
+        invalid_values = [
+            None,
+            "",
+            "not-a-date",
+            {"$date": "invalid"},
+            {"unexpected": "mapping"},
+        ]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                self.assertIsNone(parse_datetime(value))
+
+    def test_epoch_seconds_and_milliseconds_are_supported(self):
+        epoch_seconds = 1717761600
+        epoch_milliseconds = epoch_seconds * 1000
+        expected = datetime.fromtimestamp(epoch_seconds)
+
+        self.assertEqual(
+            parse_datetime(str(epoch_seconds)),
+            expected,
+        )
+        self.assertEqual(
+            parse_datetime(str(epoch_milliseconds)),
+            expected,
+        )
+        self.assertEqual(
+            parse_datetime({"$date": epoch_milliseconds}),
+            expected,
+        )
+
+    def test_supported_text_formats_and_whitespace_are_parsed(self):
+        cases = [
+            (
+                "Sun   Jun 07 14:05 2026",
+                datetime(2026, 6, 7, 14, 5),
+            ),
+            (
+                "2026-06-07 14:05:33",
+                datetime(2026, 6, 7, 14, 5, 33),
+            ),
+            (
+                "2026-06-07 14:05",
+                datetime(2026, 6, 7, 14, 5),
+            ),
+        ]
+
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(
+                    parse_datetime(value),
+                    expected,
+                )
+
+    def test_datetime_formatting_uses_dash_for_missing_values(self):
+        self.assertEqual(fmt_dt(None), "-")
+        self.assertEqual(
+            fmt_dt(datetime(2026, 6, 7, 14, 5, 33)),
+            "2026-06-07 14:05",
+        )
+
+
+class SnapshotInventoryHelperTests(unittest.TestCase):
+    def setUp(self):
+        self.original_run_ssh = FUNCTIONS.get("run_ssh")
+
+    def tearDown(self):
+        if self.original_run_ssh is None:
+            FUNCTIONS.pop("run_ssh", None)
+        else:
+            FUNCTIONS["run_ssh"] = self.original_run_ssh
+
+    def test_ssh_failure_returns_empty_inventory_and_error(self):
+        calls = []
+
+        def fake_run_ssh(ip, command, timeout=None):
+            calls.append((ip, command, timeout))
+            return False, "SSH connection timed out"
+
+        FUNCTIONS["run_ssh"] = fake_run_ssh
+
+        snapshots, error = collect_snapshots("192.0.2.10")
+
+        self.assertEqual(snapshots, {})
+        self.assertEqual(error, "SSH connection timed out")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "192.0.2.10")
+        self.assertIn("zfs list", calls[0][1])
+        self.assertEqual(calls[0][2], 60)
+
+    def test_inventory_parses_tab_and_whitespace_separated_rows(self):
+        epoch_seconds = 1717761600
+
+        output = "\n".join([
+            f"tank/apps@auto-epoch\t{epoch_seconds}",
+            "tank/media@auto-text 2026-06-07 14:05:00",
+            "tank/apps@invalid\tinvalid-date",
+            "",
+            "malformed-only",
+        ])
+
+        FUNCTIONS["run_ssh"] = (
+            lambda ip, command, timeout=None: (True, output)
+        )
+
+        snapshots, error = collect_snapshots("192.0.2.10")
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            snapshots["tank/apps@auto-epoch"],
+            datetime.fromtimestamp(epoch_seconds),
+        )
+        self.assertEqual(
+            snapshots["tank/media@auto-text"],
+            datetime(2026, 6, 7, 14, 5),
+        )
+        self.assertIsNone(
+            snapshots["tank/apps@invalid"]
+        )
+        self.assertNotIn("malformed-only", snapshots)
+
+    def test_latest_snapshot_matches_exact_dataset_prefix(self):
+        snapshots = {
+            "tank/apps@older": datetime(2026, 6, 7, 10, 0),
+            "tank/apps@newer": datetime(2026, 6, 7, 12, 0),
+            "tank/apps@invalid": None,
+            "tank/apps-child@newest": datetime(2026, 6, 7, 13, 0),
+            "tank/apps/child@newest": datetime(2026, 6, 7, 14, 0),
+            "tank/media@latest": datetime(2026, 6, 7, 15, 0),
+        }
+
+        name, created = latest_snapshot(
+            snapshots,
+            "tank/apps",
+        )
+
+        self.assertEqual(name, "tank/apps@newer")
+        self.assertEqual(
+            created,
+            datetime(2026, 6, 7, 12, 0),
+        )
+
+    def test_missing_dataset_and_short_name_fallbacks(self):
+        self.assertEqual(
+            latest_snapshot(
+                {
+                    "tank/media@daily": datetime(
+                        2026,
+                        6,
+                        7,
+                        12,
+                        0,
+                    )
+                },
+                "tank/apps",
+            ),
+            (None, None),
+        )
+
+        self.assertEqual(short_snapshot(None), "-")
+        self.assertEqual(short_snapshot("plain-name"), "plain-name")
+        self.assertEqual(
+            short_snapshot("tank/apps@auto@daily"),
+            "auto@daily",
+        )
+
+
+class ReplicationMetadataHelperTests(unittest.TestCase):
+    def test_replication_time_formats_state_datetime(self):
+        replication = {
+            "state": {
+                "datetime": "2026-06-07 14:05:33",
+            }
+        }
+
+        self.assertEqual(
+            replication_time(replication),
+            "2026-06-07 14:05",
+        )
+        self.assertEqual(replication_time({}), "-")
+
+    def test_replication_state_returns_value_or_dash(self):
+        self.assertEqual(
+            replication_state(
+                {"state": {"state": "FINISHED"}}
+            ),
+            "FINISHED",
+        )
+        self.assertEqual(replication_state({}), "-")
+        self.assertEqual(
+            replication_state({"state": {}}),
+            "-",
         )
 
 
