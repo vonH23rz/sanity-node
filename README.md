@@ -186,9 +186,10 @@ The current reference implementation uses:
 - Python 3
 - systemd
 - a static generated HTML dashboard
-- SSH access from the Utility Node to TrueNAS systems
+- SSH access from the Utility Node to configured remote systems
 - TrueNAS SCALE middleware calls through `midclt`
-- local Docker checks where available
+- local Docker checks on the collector
+- host-specific SSH Docker checks on eligible remote Linux hosts
 - HTTP checks for selected services
 
 Some values are still hardcoded in:
@@ -228,7 +229,8 @@ Current Phase 2 public-preview behavior:
 - confirmed TrueNAS host unreachability also overrides the host's Web UI result in the four-card Systems summary
 - Web UI-only, authentication, host-key, and parsing failures retain the normal per-service detail and Systems status
 - configured HTTP services can report live `UP` / `DOWN`
-- configured Docker services on the collector node can report live container status
+- configured Docker services on the collector node can report live local container status
+- configured Docker services on eligible remote `type: linux` hosts can report live container status over host-specific SSH
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
 - enabled TrueNAS hosts with `modules.snapshots: true` can report live snapshot-task state and latest-snapshot freshness
 - enabled TrueNAS hosts with `modules.replications: true` can report live replication-task configuration and execution state
@@ -247,9 +249,28 @@ Current Phase 2 public-preview behavior:
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
 - when the four-card Services summary is active, host-based cards retain their service counts but show only non-`UP` service exceptions; fully healthy hosts show one `ALL UP` line
 - when the Services summary is disabled, host-based cards retain the full per-service detail list
-- Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
+- remote Docker services remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
+- TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference checks
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
+
+### Remote Linux Docker checks
+
+Collector-hosted Docker services continue to use local `docker inspect`. Docker services assigned to another Linux host can be checked through that host's explicit SSH identity.
+
+A remote Docker host must be enabled and provide:
+
+- `type: linux`
+- `modules.docker: true`
+- a non-empty `address`
+- `ssh.enabled: true`
+- non-empty `ssh.user` and `ssh.key_file`
+
+The service must use `check: docker` and define its container name. Container names are shell-quoted before being sent remotely. Successful SSH commands parse Docker JSON from stdout only, so warning or legal banners written to stderr do not corrupt the response.
+
+Running containers report `UP`; containers not found after a successful SSH connection report `MISSING`; SSH transport failures and malformed Docker responses report `UNKNOWN`. Ineligible hosts are not contacted, and their Docker services remain `NOT CHECKED`.
+
+Remote Docker checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded service cards.
 
 ### TrueNAS snapshot checks
 
@@ -341,7 +362,7 @@ Diun sources require a metrics URL. TrueNAS sources require an enabled `type: tr
 
 Image-update results can overlay healthy configuration-driven services:
 
-- collector-local Docker services are matched using the image reference returned by `docker inspect`
+- collector-local and eligible remote Linux Docker services are matched using the image reference returned by `docker inspect`
 - configured TrueNAS app services are matched using their `app_id`
 - only an existing `UP` service can become `UPDATE`
 - existing `DOWN`, `MISSING`, `UNKNOWN`, and `NOT CHECKED` states always take precedence
@@ -438,6 +459,7 @@ python3 -m unittest discover -s tests -v
 The current tests protect:
 
 - Docker image-reference normalization and Docker Hub aliases
+- remote Linux Docker eligibility, host-specific SSH commands, transport failures, shell-safe container names, state/image parsing, missing containers, malformed responses, and stderr banner isolation
 - Diun update matching for configured Docker services
 - native TrueNAS app-update matching
 - update-overlay host scoping
@@ -482,7 +504,7 @@ The planned public install flow is:
 git clone
 copy config.example.yaml to config.yaml
 edit dashboard, collector, and host settings
-add SSH keys if TrueNAS monitoring is enabled
+add SSH keys if TrueNAS monitoring or remote Linux Docker checks are enabled
 start Sanity Node with Docker Compose
 open http://collector-ip:8099
 enable optional features later
@@ -516,7 +538,7 @@ image update monitoring
 Planned improvements:
 
 - configuration-driven hosts
-- configuration-driven services
+- additional remote Linux check types beyond Docker
 - configuration-driven local storage checks
 - configuration-driven backup checks
 - additional protection relationship types beyond replication

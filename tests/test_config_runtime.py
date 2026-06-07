@@ -2,10 +2,15 @@
 
 import ast
 import html
+import json
 import re
+import shlex
+import subprocess
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 GENERATOR = (
@@ -17,6 +22,13 @@ GENERATOR = (
 FUNCTIONS_UNDER_TEST = {
     "cfg_get",
     "enabled_items",
+    "service_label_from_state",
+    "config_service_safe_name",
+    "normalize_config_service",
+    "normalize_config_services_for_summary",
+    "normalize_config_remote_linux_docker_services",
+    "run_config_host_ssh",
+    "collect_config_remote_docker_services",
     "config_image_reference_aliases",
     "apply_config_image_update_overlay",
     "configured_host_key",
@@ -96,7 +108,10 @@ def load_generator_functions():
 
     namespace = {
         "html": html,
+        "json": json,
         "re": re,
+        "shlex": shlex,
+        "subprocess": subprocess,
         "datetime": datetime,
         "timedelta": timedelta,
         "CONFIG": {
@@ -114,6 +129,15 @@ def load_generator_functions():
 
 FUNCTIONS = load_generator_functions()
 
+normalize_config_remote_linux_docker_services = FUNCTIONS[
+    "normalize_config_remote_linux_docker_services"
+]
+run_config_host_ssh = FUNCTIONS[
+    "run_config_host_ssh"
+]
+collect_config_remote_docker_services = FUNCTIONS[
+    "collect_config_remote_docker_services"
+]
 config_image_reference_aliases = FUNCTIONS[
     "config_image_reference_aliases"
 ]
@@ -228,6 +252,409 @@ replication_time = FUNCTIONS[
 replication_state = FUNCTIONS[
     "replication_state"
 ]
+
+
+class RemoteLinuxDockerRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.original_host_ssh = FUNCTIONS.get(
+            "run_config_host_ssh"
+        )
+
+    def tearDown(self):
+        if self.original_host_ssh is None:
+            FUNCTIONS.pop("run_config_host_ssh", None)
+        else:
+            FUNCTIONS["run_config_host_ssh"] = (
+                self.original_host_ssh
+            )
+
+    @staticmethod
+    def host(**overrides):
+        host = {
+            "id": "remote-linux",
+            "enabled": True,
+            "display_name": "Remote Linux",
+            "hostname": "remote-linux",
+            "address": "192.0.2.20",
+            "type": "linux",
+            "ssh": {
+                "enabled": True,
+                "user": "sanity",
+                "key_file": "/app/ssh/remote-linux",
+            },
+            "modules": {
+                "docker": True,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    @staticmethod
+    def service(**overrides):
+        service = {
+            "id": "remote-web",
+            "enabled": True,
+            "host": "remote-linux",
+            "name": "Remote Web",
+            "type": "app",
+            "check": "docker",
+            "container": "remote-web",
+        }
+        service.update(overrides)
+        return service
+
+    @staticmethod
+    def collected_service(container="remote-web"):
+        return {
+            "id": "remote-web",
+            "host": "remote-linux",
+            "display": "Remote Web",
+            "type": "app",
+            "check": "docker",
+            "container": container,
+            "remote_host": {
+                "id": "remote-linux",
+                "display_name": "Remote Linux",
+                "address": "192.0.2.20",
+                "ssh_user": "sanity",
+                "ssh_key_file": "/app/ssh/remote-linux",
+            },
+        }
+
+    def test_normalizer_selects_eligible_remote_linux_service(self):
+        result = normalize_config_remote_linux_docker_services(
+            [self.host()],
+            [self.service()],
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], "remote-web")
+        self.assertEqual(
+            result[0]["remote_host"],
+            {
+                "id": "remote-linux",
+                "display_name": "Remote Linux",
+                "address": "192.0.2.20",
+                "ssh_user": "sanity",
+                "ssh_key_file": "/app/ssh/remote-linux",
+            },
+        )
+
+    def test_normalizer_rejects_ineligible_hosts_and_services(self):
+        cases = (
+            (
+                "collector host",
+                self.host(id="collector"),
+                self.service(host="collector"),
+            ),
+            (
+                "TrueNAS host",
+                self.host(type="truenas"),
+                self.service(),
+            ),
+            (
+                "disabled host",
+                self.host(enabled=False),
+                self.service(),
+            ),
+            (
+                "Docker module disabled",
+                self.host(modules={"docker": False}),
+                self.service(),
+            ),
+            (
+                "missing address",
+                self.host(address=None),
+                self.service(),
+            ),
+            (
+                "missing SSH settings",
+                self.host(ssh=None),
+                self.service(),
+            ),
+            (
+                "SSH disabled",
+                self.host(
+                    ssh={
+                        "enabled": False,
+                        "user": "sanity",
+                        "key_file": "/app/ssh/key",
+                    }
+                ),
+                self.service(),
+            ),
+            (
+                "missing SSH user",
+                self.host(
+                    ssh={
+                        "enabled": True,
+                        "user": "",
+                        "key_file": "/app/ssh/key",
+                    }
+                ),
+                self.service(),
+            ),
+            (
+                "HTTP service",
+                self.host(),
+                self.service(check="http"),
+            ),
+            (
+                "service on another host",
+                self.host(),
+                self.service(host="other"),
+            ),
+        )
+
+        for name, host, service in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    normalize_config_remote_linux_docker_services(
+                        [host],
+                        [service],
+                    ),
+                    [],
+                )
+
+    def test_host_ssh_uses_explicit_user_key_and_address(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="remote output\n",
+            stderr="Authorized access only\\n",
+        )
+
+        with mock.patch.object(
+            subprocess,
+            "run",
+            return_value=completed,
+        ) as run_mock:
+            returncode, output = run_config_host_ssh(
+                {
+                    "address": "192.0.2.20",
+                    "ssh_user": "sanity",
+                    "ssh_key_file": "/app/ssh/remote-linux",
+                },
+                "docker inspect remote-web",
+                timeout=12,
+            )
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(output, "remote output")
+
+        command = run_mock.call_args.args[0]
+
+        self.assertEqual(
+            command,
+            [
+                "ssh",
+                "-i",
+                "/app/ssh/remote-linux",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "sanity@192.0.2.20",
+                "docker inspect remote-web",
+            ],
+        )
+        self.assertEqual(
+            run_mock.call_args.kwargs["timeout"],
+            12,
+        )
+
+    def test_host_ssh_rejects_incomplete_configuration(self):
+        returncode, output = run_config_host_ssh(
+            {
+                "address": "192.0.2.20",
+                "ssh_user": "",
+                "ssh_key_file": "/app/ssh/key",
+            },
+            "docker inspect remote-web",
+        )
+
+        self.assertIsNone(returncode)
+        self.assertEqual(
+            output,
+            "missing host SSH configuration",
+        )
+
+    def test_host_ssh_timeout_returns_transport_error(self):
+        with mock.patch.object(
+            subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd="ssh",
+                timeout=15,
+            ),
+        ):
+            returncode, output = run_config_host_ssh(
+                {
+                    "address": "192.0.2.20",
+                    "ssh_user": "sanity",
+                    "ssh_key_file": "/app/ssh/key",
+                },
+                "docker inspect remote-web",
+                timeout=15,
+            )
+
+        self.assertIsNone(returncode)
+        self.assertEqual(output, "Command timed out")
+
+    def test_remote_collector_reports_running_container_and_image(self):
+        FUNCTIONS["run_config_host_ssh"] = (
+            lambda host, command, timeout=30: (
+                0,
+                json.dumps([
+                    {
+                        "State": {
+                            "Running": True,
+                            "Status": "running",
+                        },
+                        "Config": {
+                            "Image": "nginx:1.27",
+                        },
+                    }
+                ]),
+            )
+        )
+
+        statuses, errors = collect_config_remote_docker_services(
+            [self.collected_service()]
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            statuses["remote-web"],
+            {
+                "label": "UP",
+                "css": "ok",
+                "raw": "RUNNING",
+                "image": "nginx:1.27",
+            },
+        )
+
+    def test_remote_collector_reports_missing_container(self):
+        FUNCTIONS["run_config_host_ssh"] = (
+            lambda host, command, timeout=30: (
+                1,
+                "Error: No such container: remote-web",
+            )
+        )
+
+        statuses, errors = collect_config_remote_docker_services(
+            [self.collected_service()]
+        )
+
+        self.assertEqual(
+            statuses["remote-web"]["label"],
+            "MISSING",
+        )
+        self.assertEqual(
+            statuses["remote-web"]["css"],
+            "bad",
+        )
+        self.assertEqual(
+            errors,
+            [
+                "remote-web: "
+                "Error: No such container: remote-web"
+            ],
+        )
+
+    def test_remote_collector_reports_ssh_failure_as_unknown(self):
+        for returncode in (None, 255):
+            with self.subTest(returncode=returncode):
+                FUNCTIONS["run_config_host_ssh"] = (
+                    lambda host, command, timeout=30,
+                    code=returncode: (
+                        code,
+                        "SSH connection timed out",
+                    )
+                )
+
+                statuses, errors = (
+                    collect_config_remote_docker_services(
+                        [self.collected_service()]
+                    )
+                )
+
+                self.assertEqual(
+                    statuses["remote-web"]["label"],
+                    "UNKNOWN",
+                )
+                self.assertEqual(
+                    statuses["remote-web"]["css"],
+                    "info",
+                )
+                self.assertEqual(
+                    errors,
+                    [
+                        "remote-web: SSH connection timed out"
+                    ],
+                )
+
+    def test_remote_collector_reports_malformed_json(self):
+        FUNCTIONS["run_config_host_ssh"] = (
+            lambda host, command, timeout=30: (
+                0,
+                "not valid JSON",
+            )
+        )
+
+        statuses, errors = collect_config_remote_docker_services(
+            [self.collected_service()]
+        )
+
+        self.assertEqual(
+            statuses["remote-web"]["label"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            statuses["remote-web"]["css"],
+            "info",
+        )
+        self.assertIn(
+            "Docker inspect parse error",
+            errors[0],
+        )
+
+    def test_remote_collector_shell_quotes_container_name(self):
+        calls = []
+
+        def fake_host_ssh(host, command, timeout=30):
+            calls.append((host, command, timeout))
+            return (
+                0,
+                json.dumps([
+                    {
+                        "State": {
+                            "Running": True,
+                            "Status": "running",
+                        },
+                        "Config": {
+                            "Image": "example/image:latest",
+                        },
+                    }
+                ]),
+            )
+
+        FUNCTIONS["run_config_host_ssh"] = fake_host_ssh
+
+        container_name = "web; touch /tmp/should-not-run"
+
+        collect_config_remote_docker_services(
+            [self.collected_service(container_name)]
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0][1],
+            "docker inspect "
+            + shlex.quote(container_name),
+        )
+        self.assertEqual(calls[0][2], 15)
 
 
 class ImageReferenceAliasTests(unittest.TestCase):
