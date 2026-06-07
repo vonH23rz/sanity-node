@@ -2536,6 +2536,61 @@ def configured_host_sort_key(host):
     return (group, configured_host_display_name(host).lower())
 
 
+def config_error_indicates_host_unreachable(value):
+    raw = str(value or "").strip().lower()
+
+    if not raw:
+        return False
+
+    unreachable_markers = (
+        "no route to host",
+        "network is unreachable",
+        "host is down",
+        "connection timed out",
+        "operation timed out",
+        "connection timeout",
+        "command timed out",
+    )
+
+    return any(
+        marker in raw
+        for marker in unreachable_markers
+    )
+
+
+def config_host_service_unreachable(host, services, statuses):
+    if str(host.get("type") or "").lower() != "truenas":
+        return False
+
+    truenas_app_services = [
+        service
+        for service in services
+        if service.get("check") == "truenas_app"
+    ]
+
+    if not truenas_app_services:
+        return False
+
+    app_statuses = [
+        statuses.get(service["id"])
+        for service in truenas_app_services
+    ]
+
+    if not all(
+        status
+        and status.get("label") == "UNKNOWN"
+        for status in app_statuses
+    ):
+        return False
+
+    return any(
+        config_error_indicates_host_unreachable(
+            status.get("raw")
+        )
+        for status in app_statuses
+    )
+
+
 def build_public_host_summary_preview(hosts, services, statuses, web_statuses=None):
     # This is intentionally preview-only while the existing reference summary row
     # remains active. The four-column CSS is a layout maximum, not a fixed number
@@ -2565,26 +2620,45 @@ def build_public_host_summary_preview(hosts, services, statuses, web_statuses=No
         host_web_status = web_statuses.get(host_key, {"label": "NO URL", "css": "info", "raw": "-"})
         host_services = services_by_host.get(host_id, [])
         summary = build_service_summary(host_services, statuses)
+        host_unreachable = config_host_service_unreachable(
+            host,
+            host_services,
+            statuses,
+        )
         host_web_css = host_web_status.get("css", "info")
         host_card_css = summary["css"]
-
-        if host_web_css == "bad":
-            host_card_css = "bad"
-        elif host_web_css == "info" and not host_card_css:
-            host_card_css = "info"
+        host_badge_label = host_web_status.get("label", "UNKNOWN")
+        host_badge_css = host_web_status.get("css", "info")
 
         details = summary["details"]
         summary_value = summary["value"]
         details_class = summary["details_class"]
 
-        if not details:
-            summary_value = "No services configured yet"
+        if host_unreachable:
+            host_card_css = "bad"
+            host_badge_label = "UNREACHABLE"
+            host_badge_css = "bad"
+            summary_value = "Host unreachable"
             details_class = ""
-            details = '<span class="service-line"><strong>Host Web UI only</strong> <span class="info-text">INFO</span></span>'
+            details = build_public_summary_detail(
+                "Configured services",
+                "UNAVAILABLE",
+                "bad",
+            )
+        else:
+            if host_web_css == "bad":
+                host_card_css = "bad"
+            elif host_web_css == "info" and not host_card_css:
+                host_card_css = "info"
+
+            if not details:
+                summary_value = "No services configured yet"
+                details_class = ""
+                details = '<span class="service-line"><strong>Host Web UI only</strong> <span class="info-text">INFO</span></span>'
 
         cards_html += f"""
     <div class="summary-card {h(host_card_css)}">
-      <div class="title">{h(title)} {badge(host_web_status.get("label", "UNKNOWN"), host_web_status.get("css", "info"))}</div>
+      <div class="title">{h(title)} {badge(host_badge_label, host_badge_css)}</div>
       <div class="value">{h(summary_value)}</div>
       <div class="summary-details service-details {h(details_class)}">
         {details}

@@ -222,6 +222,8 @@ Current Phase 2 public-preview behavior:
 
 - configured hosts can appear as host-based summary cards
 - host Web UI links can show preview reachability badges
+- a confirmed TrueNAS SSH/network timeout collapses that host card to `Host unreachable` instead of listing every configured service
+- Web UI-only, authentication, host-key, and parsing failures retain the normal per-service detail
 - configured HTTP services can report live `UP` / `DOWN`
 - configured Docker services on the collector node can report live container status
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
