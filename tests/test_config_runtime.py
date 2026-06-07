@@ -3,6 +3,7 @@
 import ast
 import html
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -45,6 +46,8 @@ FUNCTIONS_UNDER_TEST = {
     "apply_config_protection_replication_overlay",
     "build_config_truenas_snapshot_preview",
     "build_config_truenas_replication_preview",
+    "freshness_status",
+    "config_replication_status",
 }
 
 
@@ -74,6 +77,7 @@ def load_generator_functions():
 
     namespace = {
         "html": html,
+        "timedelta": timedelta,
         "CONFIG": {
             "collector": {
                 "id": "collector",
@@ -145,6 +149,12 @@ build_config_truenas_snapshot_preview = FUNCTIONS[
 ]
 build_config_truenas_replication_preview = FUNCTIONS[
     "build_config_truenas_replication_preview"
+]
+freshness_status = FUNCTIONS[
+    "freshness_status"
+]
+config_replication_status = FUNCTIONS[
+    "config_replication_status"
 ]
 
 
@@ -975,6 +985,263 @@ class StorageSummaryCardTests(unittest.TestCase):
             "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
             card,
         )
+
+
+class SnapshotFreshnessStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_run = datetime(2026, 6, 7, 12, 0)
+        self.original_previous_run = FUNCTIONS.get("previous_run")
+        FUNCTIONS["previous_run"] = lambda schedule: self.previous_run
+
+    def tearDown(self):
+        if self.original_previous_run is None:
+            FUNCTIONS.pop("previous_run", None)
+        else:
+            FUNCTIONS["previous_run"] = self.original_previous_run
+
+    def test_missing_task_is_unknown(self):
+        self.assertEqual(
+            freshness_status(None, None),
+            ("UNKNOWN", "warning", "-"),
+        )
+
+    def test_disabled_task_takes_precedence(self):
+        self.assertEqual(
+            freshness_status(
+                {"enabled": False},
+                self.previous_run,
+            ),
+            (
+                "DISABLED",
+                "disabled",
+                "snapshot task disabled",
+            ),
+        )
+
+    def test_enabled_task_without_snapshot_is_missing(self):
+        self.assertEqual(
+            freshness_status(
+                {"enabled": True},
+                None,
+            ),
+            (
+                "MISSING",
+                "bad",
+                "no snapshot found",
+            ),
+        )
+
+    def test_unavailable_previous_run_is_unknown(self):
+        FUNCTIONS["previous_run"] = lambda schedule: None
+
+        self.assertEqual(
+            freshness_status(
+                {
+                    "enabled": True,
+                    "schedule": {"hour": "12"},
+                },
+                self.previous_run,
+            ),
+            (
+                "UNKNOWN",
+                "warning",
+                "cannot calculate previous run",
+            ),
+        )
+
+    def test_snapshot_at_five_minute_grace_boundary_is_ok(self):
+        latest = self.previous_run - timedelta(minutes=5)
+
+        self.assertEqual(
+            freshness_status(
+                {
+                    "enabled": True,
+                    "schedule": {"hour": "12"},
+                },
+                latest,
+            ),
+            (
+                "OK",
+                "ok",
+                "fresh enough",
+            ),
+        )
+
+    def test_older_snapshot_with_allow_empty_false_is_ok(self):
+        latest = self.previous_run - timedelta(hours=2)
+
+        self.assertEqual(
+            freshness_status(
+                {
+                    "enabled": True,
+                    "allow_empty": False,
+                    "schedule": {"hour": "12"},
+                },
+                latest,
+            ),
+            (
+                "OK",
+                "ok",
+                "no changes since last schedule; allow_empty=false",
+            ),
+        )
+
+    def test_older_snapshot_with_allow_empty_enabled_is_old(self):
+        latest = self.previous_run - timedelta(hours=2)
+
+        for allow_empty in (True, None):
+            with self.subTest(allow_empty=allow_empty):
+                task = {
+                    "enabled": True,
+                    "schedule": {"hour": "12"},
+                }
+
+                if allow_empty is not None:
+                    task["allow_empty"] = allow_empty
+
+                self.assertEqual(
+                    freshness_status(task, latest),
+                    (
+                        "OLD",
+                        "warning",
+                        "older than last scheduled run",
+                    ),
+                )
+
+
+class ReplicationStatusClassificationTests(unittest.TestCase):
+    def test_disabled_task_takes_precedence(self):
+        self.assertEqual(
+            config_replication_status(
+                {
+                    "enabled": False,
+                    "state": ["unexpected"],
+                }
+            ),
+            (
+                "DISABLED",
+                "disabled",
+                "replication task disabled",
+            ),
+        )
+
+    def test_non_mapping_state_is_unknown(self):
+        self.assertEqual(
+            config_replication_status(
+                {
+                    "enabled": True,
+                    "state": ["FAILED"],
+                }
+            ),
+            (
+                "UNKNOWN",
+                "warning",
+                "unexpected replication state response",
+            ),
+        )
+
+    def test_success_states_are_ok(self):
+        for state in ("FINISHED", "SUCCESS"):
+            with self.subTest(state=state):
+                self.assertEqual(
+                    config_replication_status(
+                        {
+                            "enabled": True,
+                            "state": {"state": state},
+                        }
+                    ),
+                    (
+                        "OK",
+                        "ok",
+                        "last execution finished",
+                    ),
+                )
+
+    def test_active_states_are_informational(self):
+        for state in ("RUNNING", "PENDING", "WAITING"):
+            with self.subTest(state=state):
+                self.assertEqual(
+                    config_replication_status(
+                        {
+                            "enabled": True,
+                            "state": {"state": state.lower()},
+                        }
+                    ),
+                    (
+                        state,
+                        "info",
+                        f"replication task is {state.lower()}",
+                    ),
+                )
+
+    def test_paused_states_are_warnings(self):
+        for state in ("HOLD", "PAUSED"):
+            with self.subTest(state=state):
+                self.assertEqual(
+                    config_replication_status(
+                        {
+                            "enabled": True,
+                            "state": {"state": state},
+                        }
+                    ),
+                    (
+                        state,
+                        "warning",
+                        f"replication task is {state.lower()}",
+                    ),
+                )
+
+    def test_failure_states_use_reported_error(self):
+        for state in ("FAILED", "ERROR", "ABORTED"):
+            with self.subTest(state=state):
+                self.assertEqual(
+                    config_replication_status(
+                        {
+                            "enabled": True,
+                            "state": {
+                                "state": state,
+                                "error": "remote transport failed",
+                            },
+                        }
+                    ),
+                    (
+                        "CRITICAL",
+                        "bad",
+                        "remote transport failed",
+                    ),
+                )
+
+    def test_failure_without_error_uses_state_fallback(self):
+        self.assertEqual(
+            config_replication_status(
+                {
+                    "enabled": True,
+                    "state": {"state": "FAILED"},
+                }
+            ),
+            (
+                "CRITICAL",
+                "bad",
+                "last execution state: failed",
+            ),
+        )
+
+    def test_missing_or_unrecognized_state_is_unknown(self):
+        cases = [
+            ({}, "execution state: unknown"),
+            ({"state": {"state": "BROKEN"}}, "execution state: broken"),
+        ]
+
+        for task, expected_note in cases:
+            with self.subTest(task=task):
+                self.assertEqual(
+                    config_replication_status(task),
+                    (
+                        "UNKNOWN",
+                        "warning",
+                        expected_note,
+                    ),
+                )
 
 
 class SnapshotPreviewRenderingTests(unittest.TestCase):
