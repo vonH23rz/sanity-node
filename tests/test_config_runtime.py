@@ -43,6 +43,8 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_four_card_summary_preview",
     "config_replication_row_matches_relationship",
     "apply_config_protection_replication_overlay",
+    "build_config_truenas_snapshot_preview",
+    "build_config_truenas_replication_preview",
 }
 
 
@@ -137,6 +139,12 @@ config_replication_row_matches_relationship = FUNCTIONS[
 ]
 apply_config_protection_replication_overlay = FUNCTIONS[
     "apply_config_protection_replication_overlay"
+]
+build_config_truenas_snapshot_preview = FUNCTIONS[
+    "build_config_truenas_snapshot_preview"
+]
+build_config_truenas_replication_preview = FUNCTIONS[
+    "build_config_truenas_replication_preview"
 ]
 
 
@@ -967,6 +975,216 @@ class StorageSummaryCardTests(unittest.TestCase):
             "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
             card,
         )
+
+
+class SnapshotPreviewRenderingTests(unittest.TestCase):
+    def test_empty_snapshot_rows_render_no_section(self):
+        self.assertEqual(
+            build_config_truenas_snapshot_preview([]),
+            "",
+        )
+
+    def test_snapshot_preview_renders_counts_states_and_escaped_values(self):
+        rows = [
+            {
+                "host_id": "t620",
+                "host_name": "T620 <Primary>",
+                "dataset": "tank/apps<prod>",
+                "task_enabled": True,
+                "label": "OK",
+                "css": "ok",
+                "latest": "auto<daily>",
+                "latest_time": "2026-06-07 10:00",
+                "raw": "fresh & current",
+            },
+            {
+                "host_id": "t620",
+                "host_name": "T620 <Primary>",
+                "dataset": "tank/media",
+                "task_enabled": False,
+                "label": "DISABLED",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "snapshot task disabled",
+            },
+            {
+                "host_id": "t330",
+                "host_name": "T330 Backup",
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "UNKNOWN",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "snapshot query failed",
+            },
+        ]
+
+        preview = build_config_truenas_snapshot_preview(rows)
+
+        self.assertIn(
+            "<h3>Configured TrueNAS Snapshot Tasks</h3>",
+            preview,
+        )
+        self.assertIn("2 hosts · 2 tasks", preview)
+        self.assertIn("T620 &lt;Primary&gt;", preview)
+        self.assertIn("tank/apps&lt;prod&gt;", preview)
+        self.assertIn("auto&lt;daily&gt;", preview)
+        self.assertIn("2026-06-07 10:00", preview)
+        self.assertIn("fresh &amp; current", preview)
+        self.assertIn(">ENABLED</span>", preview)
+        self.assertIn(">DISABLED</span>", preview)
+        self.assertIn(">UNKNOWN</span>", preview)
+
+    def test_snapshot_non_task_rows_are_excluded_from_task_count(self):
+        rows = [
+            {
+                "host_id": "t620",
+                "host_name": "T620",
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "INFO",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "no snapshot tasks configured",
+            },
+            {
+                "host_id": "t330",
+                "host_name": "T330",
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "UNKNOWN",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "snapshot task query failed",
+            },
+        ]
+
+        preview = build_config_truenas_snapshot_preview(rows)
+
+        self.assertIn("2 hosts · 0 tasks", preview)
+
+
+class ReplicationPreviewRenderingTests(unittest.TestCase):
+    def test_empty_replication_rows_render_no_section(self):
+        self.assertEqual(
+            build_config_truenas_replication_preview([]),
+            "",
+        )
+
+    def test_replication_preview_renders_singular_counts_and_details(self):
+        rows = [
+            {
+                "host_id": "t620",
+                "host_name": "T620 <Primary>",
+                "task_id": "12",
+                "name": "T620 & T330 replication",
+                "task_enabled": True,
+                "direction": "PUSH",
+                "transport": "SSH",
+                "source_datasets": [
+                    "tank/apps",
+                    "tank/media<archive>",
+                ],
+                "target_dataset": "backup/t620/zfs-replication",
+                "execution_state": "FINISHED",
+                "execution_time": "2026-06-07 09:30",
+                "last_snapshot": "auto-2026-06-07_09-00",
+                "label": "OK",
+                "css": "ok",
+                "raw": "last execution finished & verified",
+            },
+        ]
+
+        preview = build_config_truenas_replication_preview(rows)
+
+        self.assertIn(
+            "<h3>Configured TrueNAS Replication Tasks</h3>",
+            preview,
+        )
+        self.assertIn("1 host · 1 task", preview)
+        self.assertIn("T620 &lt;Primary&gt;", preview)
+        self.assertIn("T620 &amp; T330 replication", preview)
+        self.assertIn("tank/apps</span><br><span", preview)
+        self.assertIn("tank/media&lt;archive&gt;", preview)
+        self.assertIn("backup/t620/zfs-replication", preview)
+        self.assertIn(">PUSH</span>", preview)
+        self.assertIn(">SSH</span>", preview)
+        self.assertIn(">ENABLED</span>", preview)
+        self.assertIn(">FINISHED</span>", preview)
+        self.assertIn("2026-06-07 09:30", preview)
+        self.assertIn("auto-2026-06-07_09-00", preview)
+        self.assertIn(
+            "last execution finished &amp; verified",
+            preview,
+        )
+
+    def test_replication_preview_renders_plural_counts_and_state_badges(self):
+        rows = [
+            {
+                "host_id": "t620",
+                "host_name": "T620",
+                "task_id": "21",
+                "name": "Paused replication",
+                "task_enabled": False,
+                "direction": "PUSH",
+                "transport": "SSH",
+                "source_datasets": ["tank/apps"],
+                "target_dataset": "backup/t620/apps",
+                "execution_state": "PAUSED",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "PAUSED",
+                "css": "warning",
+                "raw": "replication task is paused",
+            },
+            {
+                "host_id": "t330",
+                "host_name": "T330",
+                "task_id": "22",
+                "name": "Failed replication",
+                "task_enabled": True,
+                "direction": "PULL",
+                "transport": "LOCAL",
+                "source_datasets": ["backup/incoming"],
+                "target_dataset": "backup/archive",
+                "execution_state": "FAILED",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "CRITICAL",
+                "css": "bad",
+                "raw": "remote failure",
+            },
+            {
+                "host_id": "t330",
+                "host_name": "T330",
+                "task_id": "-",
+                "name": "-",
+                "task_enabled": None,
+                "direction": "-",
+                "transport": "-",
+                "source_datasets": [],
+                "target_dataset": "-",
+                "execution_state": "-",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "replication query failed",
+            },
+        ]
+
+        preview = build_config_truenas_replication_preview(rows)
+
+        self.assertIn("2 hosts · 2 tasks", preview)
+        self.assertIn(">DISABLED</span>", preview)
+        self.assertIn(">PAUSED</span>", preview)
+        self.assertIn(">FAILED</span>", preview)
+        self.assertIn(">CRITICAL</span>", preview)
+        self.assertIn("replication query failed", preview)
 
 
 class ProtectionReplicationOverlayTests(unittest.TestCase):
