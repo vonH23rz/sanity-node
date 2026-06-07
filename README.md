@@ -433,6 +433,8 @@ The current tests protect:
 - collector-error classification precedence, fallback behavior, Type badges, HTML escaping, and empty-section rendering
 - summary-card normalization and fallback behavior
 - compact host-service exception rendering, `ALL UP` output, full-detail fallback, and unreachable-host precedence
+- Storage, Protection, and Services summary-card empty states, counts, severity precedence, detail rendering, and multi-column behavior
+- assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 
