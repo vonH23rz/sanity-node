@@ -69,7 +69,11 @@ collector:
 # - modules.replications: true activates live replication-task and
 #   execution-state checks
 #
-# Both checks require a host address and working Sanity Node SSH credentials.
+# For enabled remote type: linux hosts:
+# - modules.docker: true enables remote docker inspect checks
+# - the host must provide an address and explicit enabled SSH settings
+#
+# Remote checks require working Sanity Node SSH credentials.
 
 hosts:
   # ---------------------------------------------------------------------------
@@ -169,13 +173,20 @@ hosts:
 #
 # Check type controls how Sanity Node checks the service:
 # - check: http        -> HTTP/HTTPS reachability check
-# - check: docker      -> local collector Docker container status
+# - check: docker      -> collector-local or remote Linux container status
 # - check: truenas_app -> configured TrueNAS SCALE app status
 #
 # Current public-preview behavior:
 # - http checks are active and can report UP/DOWN
-# - docker checks are active for containers on the collector node
-# - docker checks for other hosts are shown as NOT CHECKED for now
+# - collector Docker checks use local docker inspect
+# - remote Docker checks require an enabled type: linux host with:
+#   - modules.docker: true
+#   - a non-empty address
+#   - ssh.enabled: true
+#   - non-empty ssh.user and ssh.key_file
+# - ineligible remote Docker hosts remain NOT CHECKED
+# - SSH failures report UNKNOWN; missing containers report MISSING
+# - successful SSH parsing ignores stderr login banners
 # - truenas_app checks are active for enabled type: truenas hosts with an address
 # - truenas_app checks on non-TrueNAS hosts are shown as NOT CHECKED for now
 #
@@ -224,8 +235,9 @@ services:
   # ---------------------------------------------------------------------------
   # Docker container example
   # ---------------------------------------------------------------------------
-  # Requires Docker access on the host where the container runs.
-  # If you do not want to expose Docker access, use HTTP checks where possible.
+  # Collector services use local Docker access.
+  # Remote Linux services require modules.docker: true and explicit SSH settings.
+  # If you do not want to grant Docker access, use HTTP checks where possible.
 
   - enabled: false
     host: collector

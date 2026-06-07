@@ -337,6 +337,190 @@ def collect_config_docker_services(services):
     return statuses, errors
 
 
+def normalize_config_remote_linux_docker_services(hosts, services):
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+    eligible_hosts = {}
+
+    for host in enabled_items(hosts):
+        if not isinstance(host, dict):
+            continue
+
+        host_id = str(host.get("id") or "")
+
+        if (
+            not host_id
+            or host_id in (collector_id, "collector")
+            or str(host.get("type") or "").lower() != "linux"
+        ):
+            continue
+
+        modules = host.get("modules") or {}
+
+        if (
+            not isinstance(modules, dict)
+            or modules.get("docker") is not True
+        ):
+            continue
+
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+
+        if (
+            not address
+            or not isinstance(ssh, dict)
+            or ssh.get("enabled") is not True
+        ):
+            continue
+
+        ssh_user = str(ssh.get("user") or "").strip()
+        ssh_key_file = str(ssh.get("key_file") or "").strip()
+
+        if not ssh_user or not ssh_key_file:
+            continue
+
+        eligible_hosts[host_id] = {
+            "id": host_id,
+            "display_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "address": address,
+            "ssh_user": ssh_user,
+            "ssh_key_file": ssh_key_file,
+        }
+
+    normalized = []
+
+    for service in normalize_config_services_for_summary(services):
+        if service.get("check") != "docker":
+            continue
+
+        host_id = str(service.get("host") or "")
+        remote_host = eligible_hosts.get(host_id)
+
+        if not remote_host:
+            continue
+
+        normalized_service = dict(service)
+        normalized_service["remote_host"] = remote_host
+        normalized.append(normalized_service)
+
+    return normalized
+
+
+def run_config_host_ssh(host, command, timeout=30):
+    address = str(host.get("address") or "").strip()
+    ssh_user = str(host.get("ssh_user") or "").strip()
+    ssh_key_file = str(host.get("ssh_key_file") or "").strip()
+
+    if not address or not ssh_user or not ssh_key_file:
+        return None, "missing host SSH configuration"
+
+    cmd = [
+        "ssh",
+        "-i", ssh_key_file,
+        "-o", "IdentitiesOnly=yes",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=5",
+        f"{ssh_user}@{address}",
+        command,
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "Command timed out"
+    except Exception as e:
+        return None, str(e)
+
+    if result.returncode == 0:
+        return 0, result.stdout.strip()
+
+    output = (result.stdout + result.stderr).strip()
+    return result.returncode, output
+
+
+def collect_config_remote_docker_services(services):
+    statuses = {}
+    errors = []
+
+    for service in services:
+        service_id = service["id"]
+        container_name = str(
+            service.get("container") or service_id
+        )
+        remote_host = service.get("remote_host") or {}
+        command = (
+            "docker inspect "
+            + shlex.quote(container_name)
+        )
+
+        returncode, output = run_config_host_ssh(
+            remote_host,
+            command,
+            timeout=15,
+        )
+
+        if returncode is None or returncode == 255:
+            raw = output or "remote Docker query failed"
+            statuses[service_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": raw,
+            }
+            errors.append(f"{service_id}: {raw}")
+            continue
+
+        if returncode != 0:
+            raw = output or "container not found"
+            statuses[service_id] = {
+                "label": "MISSING",
+                "css": "bad",
+                "raw": raw,
+            }
+            errors.append(f"{service_id}: {raw}")
+            continue
+
+        image_ref = None
+
+        try:
+            payload = json.loads(output)
+            container = payload[0]
+            state = container.get("State", {})
+            config = container.get("Config", {})
+            image_ref = config.get("Image")
+            raw_state = (
+                "RUNNING"
+                if state.get("Running")
+                else state.get("Status")
+            )
+            label, css = service_label_from_state(
+                raw_state,
+                exists=True,
+            )
+        except Exception as e:
+            raw_state = str(e)
+            label, css = "UNKNOWN", "info"
+            errors.append(
+                f"{service_id}: Docker inspect parse error: {e}"
+            )
+
+        statuses[service_id] = {
+            "label": label,
+            "css": css,
+            "raw": raw_state,
+            "image": image_ref,
+        }
+
+    return statuses, errors
+
+
 def normalize_config_truenas_app_services(hosts, services):
     enabled_truenas_host_ids = {
         str(host.get("id") or "")
@@ -453,9 +637,9 @@ def collect_http_services(services):
 
 
 def build_config_summary_statuses(services, http_statuses, docker_statuses=None, truenas_app_statuses=None):
-    # Preview-only: HTTP checks are live today. Collector-local Docker checks and
-    # configured TrueNAS app checks are active when configured. Other future paths
-    # remain explicitly marked as not checked instead of falling back to UNKNOWN.
+    # Preview-only: HTTP checks, collector-local Docker checks, eligible remote
+    # Linux Docker checks, and configured TrueNAS app checks are active when
+    # configured. Unsupported paths remain explicitly marked as not checked.
     statuses = dict(http_statuses)
     statuses.update(docker_statuses or {})
     statuses.update(truenas_app_statuses or {})
@@ -3872,6 +4056,7 @@ def collect_pool_temperatures(ip):
 import json
 import os
 import re
+import shlex
 import subprocess
 
 
@@ -4957,6 +5142,23 @@ config_docker_statuses, config_docker_errors = collect_config_docker_services(co
 for error in config_docker_errors:
     collection_errors.append(("Configured Docker service query", error))
 
+config_remote_docker_services = normalize_config_remote_linux_docker_services(
+    CONFIG_HOSTS,
+    CONFIG_ENABLED_SERVICES,
+)
+config_remote_docker_statuses, config_remote_docker_errors = (
+    collect_config_remote_docker_services(
+        config_remote_docker_services,
+    )
+)
+
+for error in config_remote_docker_errors:
+    collection_errors.append(
+        ("Configured remote Docker service query", error)
+    )
+
+config_docker_statuses.update(config_remote_docker_statuses)
+
 config_truenas_app_services = normalize_config_truenas_app_services(CONFIG_HOSTS, CONFIG_ENABLED_SERVICES)
 config_truenas_app_statuses, config_truenas_app_errors = collect_config_truenas_app_services(
     CONFIG_HOSTS,
@@ -4966,7 +5168,12 @@ config_truenas_app_statuses, config_truenas_app_errors = collect_config_truenas_
 for error in config_truenas_app_errors:
     collection_errors.append(("Configured TrueNAS app query", error))
 
-config_checked_services = config_http_services + config_docker_services + config_truenas_app_services
+config_checked_services = (
+    config_http_services
+    + config_docker_services
+    + config_remote_docker_services
+    + config_truenas_app_services
+)
 config_checked_statuses = {}
 config_checked_statuses.update(config_http_statuses)
 config_checked_statuses.update(config_docker_statuses)
