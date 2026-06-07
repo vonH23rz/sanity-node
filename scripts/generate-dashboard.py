@@ -1274,28 +1274,233 @@ def build_config_local_storage_preview(checks, statuses):
 
 
 
-def normalize_config_backup_checks(checks):
+def normalize_config_backup_checks(checks, hosts=None):
+    collector_id = str(cfg_get(("collector", "id"), "collector"))
+    eligible_remote_hosts = {}
+
+    for host in enabled_items(hosts or []):
+        if not isinstance(host, dict):
+            continue
+
+        host_id = str(host.get("id") or "")
+
+        if (
+            not host_id
+            or host_id in (collector_id, "collector")
+            or str(host.get("type") or "").lower() != "linux"
+        ):
+            continue
+
+        modules = host.get("modules") or {}
+
+        if (
+            not isinstance(modules, dict)
+            or modules.get("backup_status") is not True
+        ):
+            continue
+
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+
+        if (
+            not address
+            or not isinstance(ssh, dict)
+            or ssh.get("enabled") is not True
+        ):
+            continue
+
+        ssh_user = str(ssh.get("user") or "").strip()
+        ssh_key_file = str(ssh.get("key_file") or "").strip()
+
+        if not ssh_user or not ssh_key_file:
+            continue
+
+        eligible_remote_hosts[host_id] = {
+            "id": host_id,
+            "display_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "address": address,
+            "ssh_user": ssh_user,
+            "ssh_key_file": ssh_key_file,
+        }
+
     normalized = []
 
     for index, check in enumerate(checks, start=1):
         if not isinstance(check, dict):
             continue
 
-        name = check.get("name") or check.get("id") or f"Backup Check {index}"
-        check_id = check.get("id") or f"config-backup-{index}-{config_service_safe_name(name)}"
+        name = (
+            check.get("name")
+            or check.get("id")
+            or f"Backup Check {index}"
+        )
+        check_id = (
+            check.get("id")
+            or
+            f"config-backup-{index}-"
+            f"{config_service_safe_name(name)}"
+        )
+        host_id = str(check.get("host") or "")
 
-        normalized.append({
+        normalized_check = {
             "id": str(check_id),
-            "host": check.get("host"),
+            "host": host_id,
             "name": str(name),
             "marker_file": check.get("marker_file"),
             "log_dir": check.get("log_dir"),
             "systemd_timer": check.get("systemd_timer"),
             "target": check.get("target"),
-            "max_age_hours": config_percent(check.get("max_age_hours"), 36),
-        })
+            "max_age_hours": config_percent(
+                check.get("max_age_hours"),
+                36,
+            ),
+        }
+
+        remote_host = eligible_remote_hosts.get(host_id)
+
+        if remote_host:
+            normalized_check["remote_host"] = remote_host
+
+        normalized.append(normalized_check)
 
     return normalized
+
+
+def config_backup_status(
+    check,
+    marker_epoch,
+    timer_state=None,
+    timer_error=None,
+    now=None,
+):
+    try:
+        marker_dt = datetime.fromtimestamp(float(marker_epoch))
+        current_dt = now or datetime.now()
+        age_hours = (
+            current_dt - marker_dt
+        ).total_seconds() / 3600
+    except Exception as e:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": f"could not read marker age: {e}",
+        }
+
+    timer = check.get("systemd_timer")
+    timer_note = "no timer configured"
+    timer_css = "info"
+
+    if timer:
+        if timer_error:
+            timer_note = f"timer unknown: {timer_error}"
+        else:
+            normalized_timer_state = (
+                str(timer_state or "unknown").strip()
+                or
+                "unknown"
+            )
+
+            if normalized_timer_state == "active":
+                timer_note = f"timer active: {timer}"
+                timer_css = "ok"
+            else:
+                timer_note = (
+                    f"timer {normalized_timer_state}: {timer}"
+                )
+                timer_css = "warning"
+
+    max_age_hours = check["max_age_hours"]
+
+    if age_hours > max_age_hours:
+        label = "OLD"
+        css = "warning"
+    elif timer and timer_css == "warning":
+        label = "WARNING"
+        css = "warning"
+    else:
+        label = "OK"
+        css = "ok"
+
+    raw_parts = [
+        f"marker {age_hours:.1f}h old",
+        f"max {max_age_hours}h",
+        timer_note,
+    ]
+
+    target = check.get("target")
+
+    if target:
+        raw_parts.append(f"target: {target}")
+
+    log_dir = check.get("log_dir")
+
+    if log_dir:
+        raw_parts.append(f"log: {log_dir}")
+
+    return {
+        "label": label,
+        "css": css,
+        "raw": " · ".join(raw_parts),
+        "age_hours": age_hours,
+    }
+
+
+def config_remote_backup_command(check):
+    marker_file = str(check.get("marker_file") or "")
+    marker_arg = shlex.quote(marker_file)
+
+    commands = [
+        f"if [ ! -e {marker_arg} ]; then exit 44; fi",
+        (
+            f"marker_epoch=$(stat -c %Y -- {marker_arg}) "
+            "|| exit 45"
+        ),
+        'printf "MTIME=%s\n" "$marker_epoch"',
+    ]
+
+    timer = check.get("systemd_timer")
+
+    if timer:
+        timer_arg = shlex.quote(str(timer))
+        commands.extend([
+            (
+                "timer_state=$(systemctl is-active -- "
+                f"{timer_arg} 2>&1)"
+            ),
+            'printf "TIMER=%s\n" "$timer_state"',
+        ])
+
+    return "; ".join(commands)
+
+
+def parse_config_remote_backup_payload(output):
+    values = {}
+
+    for line in str(output or "").splitlines():
+        key, separator, value = line.partition("=")
+
+        if separator and key in {"MTIME", "TIMER"}:
+            values[key] = value.strip()
+
+    marker_epoch = values.get("MTIME")
+
+    if not marker_epoch:
+        return None, None, "missing MTIME in remote backup response"
+
+    try:
+        float(marker_epoch)
+    except (TypeError, ValueError):
+        return (
+            None,
+            None,
+            f"invalid remote marker timestamp: {marker_epoch}",
+        )
+
+    return marker_epoch, values.get("TIMER"), None
 
 
 def collect_config_backup_checks(checks):
@@ -1305,16 +1510,80 @@ def collect_config_backup_checks(checks):
     for check in checks:
         check_id = check["id"]
         host_id = str(check.get("host") or "")
+        marker_file = check.get("marker_file")
+        remote_host = check.get("remote_host")
 
-        if host_id not in (collector_id, "collector"):
+        if host_id in (collector_id, "collector"):
+            if not marker_file:
+                statuses[check_id] = {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "missing marker_file",
+                }
+                continue
+
+            marker_path = Path(str(marker_file))
+
+            if not marker_path.exists():
+                statuses[check_id] = {
+                    "label": "MISSING",
+                    "css": "bad",
+                    "raw": f"marker file missing: {marker_file}",
+                }
+                continue
+
+            try:
+                marker_epoch = marker_path.stat().st_mtime
+            except Exception as e:
+                statuses[check_id] = {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": f"could not read marker age: {e}",
+                }
+                continue
+
+            timer = check.get("systemd_timer")
+            timer_state = None
+            timer_error = None
+
+            if timer:
+                try:
+                    timer_result = subprocess.run(
+                        [
+                            "systemctl",
+                            "is-active",
+                            str(timer),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    timer_state = (
+                        timer_result.stdout
+                        +
+                        timer_result.stderr
+                    ).strip() or "unknown"
+                except Exception as e:
+                    timer_error = str(e)
+
+            statuses[check_id] = config_backup_status(
+                check,
+                marker_epoch,
+                timer_state=timer_state,
+                timer_error=timer_error,
+            )
+            continue
+
+        if not remote_host:
             statuses[check_id] = {
                 "label": "NOT CHECKED",
                 "css": "info",
-                "raw": "backup checks are active for the collector node only",
+                "raw": (
+                    "backup checks require the collector "
+                    "or an eligible remote Linux host"
+                ),
             }
             continue
-
-        marker_file = check.get("marker_file")
 
         if not marker_file:
             statuses[check_id] = {
@@ -1324,9 +1593,21 @@ def collect_config_backup_checks(checks):
             }
             continue
 
-        marker_path = Path(str(marker_file))
+        returncode, output = run_config_host_ssh(
+            remote_host,
+            config_remote_backup_command(check),
+            timeout=15,
+        )
 
-        if not marker_path.exists():
+        if returncode is None or returncode == 255:
+            statuses[check_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": output or "remote backup query failed",
+            }
+            continue
+
+        if returncode == 44:
             statuses[check_id] = {
                 "label": "MISSING",
                 "css": "bad",
@@ -1334,74 +1615,35 @@ def collect_config_backup_checks(checks):
             }
             continue
 
-        try:
-            marker_dt = datetime.fromtimestamp(marker_path.stat().st_mtime)
-            age_hours = (datetime.now() - marker_dt).total_seconds() / 3600
-        except Exception as e:
+        if returncode != 0:
             statuses[check_id] = {
                 "label": "UNKNOWN",
                 "css": "info",
-                "raw": f"could not read marker age: {e}",
+                "raw": (
+                    output
+                    or
+                    "could not read remote marker timestamp"
+                ),
             }
             continue
 
-        timer = check.get("systemd_timer")
-        timer_note = "no timer configured"
-        timer_css = "info"
+        marker_epoch, timer_state, parse_error = (
+            parse_config_remote_backup_payload(output)
+        )
 
-        if timer:
-            try:
-                timer_result = subprocess.run(
-                    ["systemctl", "is-active", str(timer)],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-                timer_state = (timer_result.stdout + timer_result.stderr).strip() or "unknown"
+        if parse_error:
+            statuses[check_id] = {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": parse_error,
+            }
+            continue
 
-                if timer_result.returncode == 0 and timer_state == "active":
-                    timer_note = f"timer active: {timer}"
-                    timer_css = "ok"
-                else:
-                    timer_note = f"timer {timer_state}: {timer}"
-                    timer_css = "warning"
-            except Exception as e:
-                timer_note = f"timer unknown: {e}"
-                timer_css = "info"
-
-        max_age_hours = check["max_age_hours"]
-
-        if age_hours > max_age_hours:
-            label = "OLD"
-            css = "warning"
-        elif timer and timer_css == "warning":
-            label = "WARNING"
-            css = "warning"
-        else:
-            label = "OK"
-            css = "ok"
-
-        age_text = f"{age_hours:.1f}h old"
-        raw_parts = [
-            f"marker {age_text}",
-            f"max {max_age_hours}h",
-            timer_note,
-        ]
-
-        target = check.get("target")
-        if target:
-            raw_parts.append(f"target: {target}")
-
-        log_dir = check.get("log_dir")
-        if log_dir:
-            raw_parts.append(f"log: {log_dir}")
-
-        statuses[check_id] = {
-            "label": label,
-            "css": css,
-            "raw": " · ".join(raw_parts),
-            "age_hours": age_hours,
-        }
+        statuses[check_id] = config_backup_status(
+            check,
+            marker_epoch,
+            timer_state=timer_state,
+        )
 
     return statuses
 
@@ -1438,7 +1680,7 @@ def build_config_backup_preview(checks, statuses):
       </div>
       <div class="configured-hosts-meta">{h(len(checks))} checks</div>
     </div>
-    <p class="muted-small">Collector-local marker file and optional systemd timer checks are active. Backup checks for other hosts are shown as NOT CHECKED for now.</p>
+    <p class="muted-small">Collector-local and eligible remote Linux marker-file and optional systemd timer checks are active. Ineligible remote checks remain NOT CHECKED.</p>
     <table>
       <tr>
         <th>Status</th>
@@ -5177,7 +5419,10 @@ config_local_storage_preview_html = build_config_local_storage_preview(
     config_local_storage_statuses,
 )
 
-config_backup_checks = normalize_config_backup_checks(CONFIG_ENABLED_BACKUP_CHECKS)
+config_backup_checks = normalize_config_backup_checks(
+    CONFIG_ENABLED_BACKUP_CHECKS,
+    CONFIG_HOSTS,
+)
 config_backup_statuses = collect_config_backup_checks(config_backup_checks)
 config_backup_preview_html = build_config_backup_preview(
     config_backup_checks,

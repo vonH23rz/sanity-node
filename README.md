@@ -236,7 +236,7 @@ Current Phase 2 public-preview behavior:
 - enabled TrueNAS hosts with `modules.replications: true` can report live replication-task configuration and execution state
 - configured image update sources can report live Diun container-image updates and TrueNAS-native app updates
 - configured local storage checks can report collector-local or eligible remote Linux filesystem usage using `df`
-- configured backup checks can report collector-local marker-file freshness and optional systemd timer state
+- configured backup checks can report collector-local or eligible remote Linux marker-file freshness and optional systemd timer state
 - Collector Errors include a classified Type badge for timeouts, network failures, host-key problems, authentication failures, refused connections, parsing failures, command failures, unknown messages, and other errors
 - all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
@@ -251,7 +251,8 @@ Current Phase 2 public-preview behavior:
 - when the Services summary is disabled, host-based cards retain the full per-service detail list
 - remote Docker services remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote local storage checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
-- TrueNAS app checks on non-TrueNAS hosts and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
+- remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
+- TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
 - live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference checks
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
@@ -290,6 +291,24 @@ Each storage check must reference that host and define its mountpoint. Mountpoin
 Filesystem usage below the warning threshold reports `OK`; warning and critical thresholds report `WARNING` and `CRITICAL`. A missing mount after a successful SSH connection reports `MISSING`. SSH transport failures and malformed `df` output report `UNKNOWN`. Ineligible remote checks remain `NOT CHECKED`.
 
 Remote local-storage checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded storage checks.
+
+### Remote Linux backup checks
+
+Collector-hosted backup checks continue to read marker-file modification times and optional systemd timer state locally. Backup checks assigned to another Linux host can use that host's explicit SSH identity.
+
+A remote backup host must be enabled and provide:
+
+- `type: linux`
+- `modules.backup_status: true`
+- a non-empty `address`
+- `ssh.enabled: true`
+- non-empty `ssh.user` and `ssh.key_file`
+
+The remote command verifies that the marker exists, reads its epoch modification time with `stat -c %Y`, and optionally reads `systemctl is-active` for the configured timer. Marker paths and timer names are shell-quoted before use. Successful SSH commands parse stdout only, so unrelated stderr banners do not corrupt the response.
+
+Fresh markers report `OK`; stale markers report `OLD`; inactive timers report `WARNING`; missing markers report `MISSING`. SSH transport failures, marker-stat failures, and malformed responses report `UNKNOWN`. Ineligible remote checks remain `NOT CHECKED`.
+
+Remote backup checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded backup checks.
 
 ### TrueNAS snapshot checks
 
@@ -480,6 +499,7 @@ The current tests protect:
 - Docker image-reference normalization and Docker Hub aliases
 - remote Linux Docker eligibility, host-specific SSH commands, transport failures, shell-safe container names, state/image parsing, missing containers, malformed responses, and stderr banner isolation
 - remote Linux local-storage eligibility, collector-local preservation, host-specific SSH commands, shell-safe mountpoints, threshold classification, missing mounts, transport failures, malformed output, and ineligible-host fallback
+- remote Linux backup eligibility, collector-local preservation, shell-safe marker/timer commands, marker freshness, inactive timers, missing markers, transport/stat failures, malformed responses, and ineligible-host fallback
 - Diun update matching for configured Docker services
 - native TrueNAS app-update matching
 - update-overlay host scoping
@@ -524,7 +544,7 @@ The planned public install flow is:
 git clone
 copy config.example.yaml to config.yaml
 edit dashboard, collector, and host settings
-add SSH keys if TrueNAS monitoring or remote Linux Docker or local-storage checks are enabled
+add SSH keys if TrueNAS monitoring or remote Linux Docker, local-storage, or backup-status checks are enabled
 start Sanity Node with Docker Compose
 open http://collector-ip:8099
 enable optional features later
@@ -558,9 +578,8 @@ image update monitoring
 Planned improvements:
 
 - configuration-driven hosts
-- additional remote Linux check types beyond Docker and local storage
-- remote Linux backup checks
-- configuration-driven backup checks
+- additional remote Linux check types beyond Docker, local storage, and backup status
+- additional backup status providers beyond marker files
 - additional protection relationship types beyond replication
 - Docker Compose runtime
 - `.env.example`

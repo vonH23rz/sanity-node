@@ -72,6 +72,7 @@ collector:
 # For enabled remote type: linux hosts:
 # - modules.docker: true enables remote docker inspect checks
 # - modules.local_storage: true enables remote df checks
+# - modules.backup_status: true enables remote backup marker checks
 # - the host must provide an address and explicit enabled SSH settings
 #
 # Remote checks require working Sanity Node SSH credentials.
@@ -299,10 +300,16 @@ local_storage:
 # and backup target label.
 #
 # Current public-preview behavior:
-# - collector-local checks are active
+# - collector-local checks read the marker and timer locally
+# - remote checks require an enabled type: linux host with:
+#   - modules.backup_status: true
+#   - a non-empty address
+#   - ssh.enabled: true
+#   - non-empty ssh.user and ssh.key_file
 # - marker_file age is checked against max_age_hours
 # - systemd_timer is optional and checked when configured
-# - checks for other hosts are shown as NOT CHECKED for now
+# - ineligible remote checks remain NOT CHECKED
+# - missing markers report MISSING; SSH/query failures report UNKNOWN
 # - max_age_hours defaults to 36 if omitted
 #
 # Keep enabled: false unless those files and the timer exist on your system.
