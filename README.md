@@ -164,7 +164,8 @@ sanity-node/
 ├── examples/
 │   └── config.example.yaml
 ├── scripts/
-│   └── generate-dashboard.py
+│   ├── generate-dashboard.py
+│   └── render-preview.sh
 ├── systemd/
 │   ├── sanity-node-generate.service
 │   ├── sanity-node-generate.timer
@@ -253,6 +254,25 @@ Systems · Storage · Protection · Services
 ```
 
 The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
+
+### Safe local preview render
+
+Contributors can safely render the public runtime preview with:
+
+```bash
+./scripts/render-preview.sh
+```
+
+The helper:
+
+- uses `examples/config.example.yaml`
+- writes the generated dashboard to `/tmp/sanity-node-preview.html`
+- removes any previous temporary preview before rendering
+- verifies that the output exists and is not empty
+- checks for the public four-card preview and active-card markers
+- never writes to `/opt/homelab-dashboard/html/index.html`
+
+This provides a repeatable way to test public-preview changes without overwriting the live reference dashboard.
 
 The future model separates:
 
