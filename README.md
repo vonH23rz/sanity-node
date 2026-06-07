@@ -167,6 +167,8 @@ sanity-node/
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
 │   └── validate-config.py
+├── tests/
+│   └── test_config_runtime.py
 ├── systemd/
 │   ├── sanity-node-generate.service
 │   ├── sanity-node-generate.timer
@@ -398,6 +400,26 @@ The helper:
 - never writes to `/opt/homelab-dashboard/html/index.html`
 
 This provides a repeatable way to test public-preview changes without overwriting the live reference dashboard.
+
+### Configuration-driven runtime regression tests
+
+Run the standard-library regression suite with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The current tests protect:
+
+- Docker image-reference normalization and Docker Hub aliases
+- Diun update matching for configured Docker services
+- native TrueNAS app-update matching
+- update-overlay host scoping
+- unhealthy service status precedence over update notices
+- SSH and network-error classification for unreachable hosts
+- TrueNAS host-collapse gating, including partial success, authentication errors, Linux hosts, HTTP-only services, and missing statuses
+
+The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 
 The future model separates:
 
