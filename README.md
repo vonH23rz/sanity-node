@@ -235,6 +235,8 @@ Current Phase 2 public-preview behavior:
 - configured image update sources can report live Diun container-image updates and TrueNAS-native app updates
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
+- Collector Errors include a classified Type badge for timeouts, network failures, host-key problems, authentication failures, refused connections, parsing failures, command failures, unknown messages, and other errors
+- all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
 - configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
@@ -424,6 +426,7 @@ The current tests protect:
 - SSH and network-error classification for unreachable hosts
 - TrueNAS host-collapse gating, including partial success, authentication errors, Linux hosts, HTTP-only services, and missing statuses
 - Systems-summary host-health propagation, Web UI fallback behavior, and mixed HTTP/TrueNAS service handling
+- collector-error classification precedence, fallback behavior, Type badges, HTML escaping, and empty-section rendering
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 

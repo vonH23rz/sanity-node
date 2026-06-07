@@ -2558,6 +2558,125 @@ def config_error_indicates_host_unreachable(value):
     )
 
 
+def classify_collector_error(value):
+    raw = str(value or "").strip()
+    lower = raw.lower()
+
+    if not lower:
+        return {"label": "UNKNOWN", "css": "info"}
+
+    classifications = (
+        (
+            "TIMEOUT",
+            "bad",
+            (
+                "connection timed out",
+                "operation timed out",
+                "connection timeout",
+                "command timed out",
+                "timed out after",
+            ),
+        ),
+        (
+            "NETWORK",
+            "bad",
+            (
+                "no route to host",
+                "network is unreachable",
+                "host is down",
+            ),
+        ),
+        (
+            "HOST KEY",
+            "warning",
+            (
+                "host key verification failed",
+                "remote host identification has changed",
+                "offending key",
+            ),
+        ),
+        (
+            "AUTH",
+            "warning",
+            (
+                "permission denied",
+                "authentication failed",
+                "publickey",
+                "access denied",
+            ),
+        ),
+        (
+            "REFUSED",
+            "bad",
+            (
+                "connection refused",
+            ),
+        ),
+        (
+            "PARSE",
+            "warning",
+            (
+                "failed to parse",
+                "parse error",
+                "json decode",
+                "invalid json",
+                "malformed json",
+                "valid json",
+            ),
+        ),
+        (
+            "COMMAND",
+            "warning",
+            (
+                "midclt",
+                "command failed",
+                "returned non-zero",
+                "non-zero exit",
+                "exit status",
+            ),
+        ),
+    )
+
+    for label, css, markers in classifications:
+        if any(marker in lower for marker in markers):
+            return {"label": label, "css": css}
+
+    return {"label": "OTHER", "css": "info"}
+
+
+def build_collector_errors_section(collection_errors):
+    if not collection_errors:
+        return ""
+
+    error_rows = ""
+
+    for name, error in collection_errors:
+        classification = classify_collector_error(error)
+
+        error_rows += f"""
+<tr class="bad">
+  <td>{h(name)}</td>
+  <td>{badge(classification["label"], classification["css"])}</td>
+  <td><pre>{h(error)}</pre></td>
+</tr>
+"""
+
+    return f"""
+<section>
+  <h2>Collector Errors</h2>
+  <p class="muted-small">Error types are classified from collector messages. All rows remain collector failures, and this presentation does not change Overall Status handling.</p>
+  <table>
+    <tr>
+      <th>Check</th>
+      <th>Type</th>
+      <th>Result</th>
+    </tr>
+    {error_rows}
+  </table>
+</section>
+"""
+
+
 def config_host_service_unreachable(host, services, statuses):
     if str(host.get("type") or "").lower() != "truenas":
         return False
@@ -4455,31 +4574,7 @@ else:
     overall_css = "ok"
     overall_note = "Data fresh"
 
-errors_section = ""
-
-if collection_errors:
-    error_rows = ""
-
-    for name, error in collection_errors:
-        error_rows += f"""
-<tr class="bad">
-  <td>{h(name)}</td>
-  <td><pre>{h(error)}</pre></td>
-</tr>
-"""
-
-    errors_section = f"""
-<section>
-  <h2>Collector Errors</h2>
-  <table>
-    <tr>
-      <th>Check</th>
-      <th>Result</th>
-    </tr>
-    {error_rows}
-  </table>
-</section>
-"""
+errors_section = build_collector_errors_section(collection_errors)
 
 public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
 public_summary_statuses = build_config_summary_statuses(
