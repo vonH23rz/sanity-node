@@ -1235,6 +1235,249 @@ def build_config_protection_preview(relationships, statuses):
 
 
 
+def normalize_config_truenas_snapshot_hosts(hosts):
+    normalized = []
+
+    for host in enabled_items(hosts):
+        if not isinstance(host, dict):
+            continue
+
+        if str(host.get("type") or "").lower() != "truenas":
+            continue
+
+        modules = host.get("modules") or {}
+
+        if not isinstance(modules, dict):
+            continue
+
+        if modules.get("snapshots") is not True:
+            continue
+
+        host_id = str(host.get("id") or "")
+
+        if not host_id:
+            continue
+
+        normalized.append({
+            "id": host_id,
+            "display_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "address": host.get("address"),
+        })
+
+    return normalized
+
+
+def collect_config_truenas_snapshot_checks(hosts):
+    rows = []
+    errors = []
+
+    for host in hosts:
+        host_id = host["id"]
+        host_name = host["display_name"]
+        address = host.get("address")
+
+        if not address:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "UNKNOWN",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "missing host address",
+            })
+            errors.append(f"{host_id}: missing host address")
+            continue
+
+        tasks, task_error = remote_json(
+            str(address),
+            "midclt call pool.snapshottask.query",
+        )
+
+        if task_error:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "UNKNOWN",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "snapshot task query failed",
+            })
+            errors.append(f"{host_id}: {task_error}")
+            continue
+
+        if not isinstance(tasks, list):
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "UNKNOWN",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "unexpected snapshot task response",
+            })
+            errors.append(f"{host_id}: snapshot task query did not return a list")
+            continue
+
+        snapshots, snapshot_error = collect_snapshots(str(address))
+
+        if snapshot_error:
+            errors.append(f"{host_id}: {snapshot_error}")
+
+        task_items = [
+            task for task in tasks
+            if isinstance(task, dict)
+        ]
+
+        if not task_items:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "dataset": "-",
+                "task_enabled": None,
+                "label": "INFO",
+                "css": "info",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "no snapshot tasks configured",
+            })
+            continue
+
+        for index, task in enumerate(
+            sorted(
+                task_items,
+                key=lambda item: str(item.get("dataset") or ""),
+            ),
+            start=1,
+        ):
+            dataset = str(
+                task.get("dataset")
+                or f"Snapshot Task {index}"
+            )
+            task_enabled = bool(task.get("enabled", True))
+
+            latest_name = None
+            latest_dt = None
+
+            if snapshot_error:
+                label = "UNKNOWN"
+                css = "info"
+                note = "snapshot inventory query failed"
+            else:
+                latest_name, latest_dt = latest_snapshot(
+                    snapshots,
+                    dataset,
+                )
+
+                try:
+                    label, css, note = freshness_status(
+                        task,
+                        latest_dt,
+                    )
+                except Exception as exc:
+                    label = "UNKNOWN"
+                    css = "info"
+                    note = f"could not evaluate schedule: {exc}"
+
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "dataset": dataset,
+                "task_enabled": task_enabled,
+                "label": label,
+                "css": css,
+                "latest": short_snapshot(latest_name),
+                "latest_time": fmt_dt(latest_dt),
+                "raw": note,
+            })
+
+    return rows, errors
+
+
+def build_config_truenas_snapshot_preview(rows):
+    if not rows:
+        return ""
+
+    host_count = len({
+        row.get("host_id")
+        for row in rows
+        if row.get("host_id")
+    })
+    task_count = len([
+        row for row in rows
+        if row.get("task_enabled") is not None
+    ])
+
+    table_rows = ""
+
+    for row in rows:
+        task_enabled = row.get("task_enabled")
+
+        if task_enabled is None:
+            task_state_html = "-"
+        elif task_enabled:
+            task_state_html = badge("ENABLED", "ok")
+        else:
+            task_state_html = badge("DISABLED", "info")
+
+        latest_name = row.get("latest") or "-"
+        latest_time = row.get("latest_time") or "-"
+
+        if latest_name != "-" and latest_time != "-":
+            latest_html = (
+                f'<span class="mono">{h(latest_name)}</span>'
+                f'<br><span class="muted-small">{h(latest_time)}</span>'
+            )
+        else:
+            latest_html = '<span class="mono">-</span>'
+
+        table_rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+        <td>{h(row.get("host_name", "-"))}</td>
+        <td><span class="mono">{h(row.get("dataset", "-"))}</span></td>
+        <td>{task_state_html}</td>
+        <td>{latest_html}</td>
+        <td>{h(row.get("raw", "-"))}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured TrueNAS Snapshot Tasks</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(host_count)} hosts · {h(task_count)} tasks</div>
+    </div>
+    <p class="muted-small">Live snapshot-task and latest-snapshot checks are active for enabled TrueNAS hosts with modules.snapshots set to true. These preview results do not affect Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Host</th>
+        <th>Dataset</th>
+        <th>Task</th>
+        <th>Latest Snapshot</th>
+        <th>Result</th>
+      </tr>
+      {table_rows}
+    </table>
+  </div>
+"""
+
+
 def configured_host_key(host):
     return str(host.get("id") or host.get("display_name") or host.get("hostname") or host.get("address") or "")
 
@@ -2972,6 +3215,24 @@ for system_name in system_info_order:
 configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
 configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
 
+config_truenas_snapshot_hosts = normalize_config_truenas_snapshot_hosts(CONFIG_HOSTS)
+config_truenas_snapshot_rows, config_truenas_snapshot_errors = collect_config_truenas_snapshot_checks(
+    config_truenas_snapshot_hosts,
+)
+
+for error in config_truenas_snapshot_errors:
+    collection_errors.append(("Configured TrueNAS snapshot query", error))
+
+config_truenas_snapshot_preview_html = build_config_truenas_snapshot_preview(
+    config_truenas_snapshot_rows,
+)
+
+if config_truenas_snapshot_hosts:
+    print(
+        "Configured TrueNAS snapshot hosts checked: "
+        f"{len(config_truenas_snapshot_hosts)}"
+    )
+
 config_local_storage_checks = normalize_config_local_storage_checks(CONFIG_ENABLED_LOCAL_STORAGE)
 config_local_storage_statuses = collect_config_local_storage_checks(config_local_storage_checks)
 config_local_storage_preview_html = build_config_local_storage_preview(
@@ -4117,6 +4378,8 @@ pre, .mono {{
     {systems_layout_html}
   </div>
   {configured_hosts_preview_html}
+
+  {config_truenas_snapshot_preview_html}
 
   {config_protection_preview_html}
 

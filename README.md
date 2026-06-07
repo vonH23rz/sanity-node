@@ -225,6 +225,7 @@ Current Phase 2 public-preview behavior:
 - configured HTTP services can report live `UP` / `DOWN`
 - configured Docker services on the collector node can report live container status
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
+- enabled TrueNAS hosts with `modules.snapshots: true` can report live snapshot-task state and latest-snapshot freshness
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
@@ -233,6 +234,32 @@ Current Phase 2 public-preview behavior:
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
 - protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
+
+### TrueNAS snapshot checks
+
+Live snapshot monitoring is enabled per host:
+
+```yaml
+hosts:
+  - id: truenas-main
+    enabled: true
+    type: truenas
+    address: 192.168.1.20
+
+    modules:
+      snapshots: true
+```
+
+For each matching host, Sanity Node:
+
+- queries periodic snapshot tasks through `midclt call pool.snapshottask.query`
+- reads the available ZFS snapshots over SSH
+- identifies the latest snapshot for every configured task dataset
+- evaluates freshness against the task schedule
+- distinguishes enabled, disabled, missing, old, and fresh tasks
+- respects TrueNAS `allow_empty: false` behavior when no dataset changes have occurred
+
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The current preview uses the configured Sanity Node SSH credentials. Snapshot preview results do not affect Overall Status yet, and the original hardcoded snapshot cards remain untouched.
 
 ### `summary_cards`
 
