@@ -55,6 +55,8 @@ FUNCTIONS_UNDER_TEST = {
     "inside_window",
     "matches_schedule",
     "previous_run",
+    "normalize_config_truenas_snapshot_hosts",
+    "normalize_config_truenas_replication_hosts",
 }
 
 
@@ -181,6 +183,12 @@ matches_schedule = FUNCTIONS[
 ]
 previous_run = FUNCTIONS[
     "previous_run"
+]
+normalize_config_truenas_snapshot_hosts = FUNCTIONS[
+    "normalize_config_truenas_snapshot_hosts"
+]
+normalize_config_truenas_replication_hosts = FUNCTIONS[
+    "normalize_config_truenas_replication_hosts"
 ]
 
 
@@ -1250,6 +1258,265 @@ class PreviousRunTests(unittest.TestCase):
             result,
             datetime(2026, 6, 7, 23, 55),
         )
+
+
+class TrueNasHostNormalizationTests(unittest.TestCase):
+    def test_snapshot_normalization_filters_ineligible_hosts(self):
+        hosts = [
+            "not-a-mapping",
+            {
+                "id": "disabled",
+                "type": "truenas",
+                "enabled": False,
+                "modules": {"snapshots": True},
+            },
+            {
+                "id": "linux",
+                "type": "linux",
+                "modules": {"snapshots": True},
+            },
+            {
+                "id": "missing-module",
+                "type": "truenas",
+                "modules": {},
+            },
+            {
+                "id": "false-module",
+                "type": "truenas",
+                "modules": {"snapshots": False},
+            },
+            {
+                "id": "truthy-module",
+                "type": "truenas",
+                "modules": {"snapshots": 1},
+            },
+            {
+                "id": "invalid-modules",
+                "type": "truenas",
+                "modules": ["snapshots"],
+            },
+            {
+                "type": "truenas",
+                "modules": {"snapshots": True},
+            },
+            {
+                "id": "eligible",
+                "type": "truenas",
+                "display_name": "Eligible TrueNAS",
+                "address": "192.0.2.10",
+                "modules": {"snapshots": True},
+            },
+        ]
+
+        self.assertEqual(
+            normalize_config_truenas_snapshot_hosts(hosts),
+            [
+                {
+                    "id": "eligible",
+                    "display_name": "Eligible TrueNAS",
+                    "address": "192.0.2.10",
+                }
+            ],
+        )
+
+    def test_replication_normalization_filters_ineligible_hosts(self):
+        hosts = [
+            {
+                "id": "disabled",
+                "type": "truenas",
+                "enabled": False,
+                "modules": {"replications": True},
+            },
+            {
+                "id": "linux",
+                "type": "linux",
+                "modules": {"replications": True},
+            },
+            {
+                "id": "missing-module",
+                "type": "truenas",
+                "modules": {},
+            },
+            {
+                "id": "false-module",
+                "type": "truenas",
+                "modules": {"replications": False},
+            },
+            {
+                "id": "truthy-module",
+                "type": "truenas",
+                "modules": {"replications": 1},
+            },
+            {
+                "id": "invalid-modules",
+                "type": "truenas",
+                "modules": "replications",
+            },
+            {
+                "type": "truenas",
+                "modules": {"replications": True},
+            },
+            {
+                "id": "eligible",
+                "type": "truenas",
+                "display_name": "Eligible TrueNAS",
+                "address": "192.0.2.11",
+                "modules": {"replications": True},
+            },
+        ]
+
+        self.assertEqual(
+            normalize_config_truenas_replication_hosts(hosts),
+            [
+                {
+                    "id": "eligible",
+                    "display_name": "Eligible TrueNAS",
+                    "address": "192.0.2.11",
+                }
+            ],
+        )
+
+    def test_module_flags_are_selected_independently(self):
+        hosts = [
+            {
+                "id": "snapshot-only",
+                "type": "truenas",
+                "modules": {
+                    "snapshots": True,
+                    "replications": False,
+                },
+            },
+            {
+                "id": "replication-only",
+                "type": "truenas",
+                "modules": {
+                    "snapshots": False,
+                    "replications": True,
+                },
+            },
+            {
+                "id": "both",
+                "type": "truenas",
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+        ]
+
+        snapshot_hosts = normalize_config_truenas_snapshot_hosts(
+            hosts
+        )
+        replication_hosts = normalize_config_truenas_replication_hosts(
+            hosts
+        )
+
+        self.assertEqual(
+            [host["id"] for host in snapshot_hosts],
+            ["snapshot-only", "both"],
+        )
+        self.assertEqual(
+            [host["id"] for host in replication_hosts],
+            ["replication-only", "both"],
+        )
+
+    def test_display_name_fallback_order_and_address_preservation(self):
+        hosts = [
+            {
+                "id": "display",
+                "type": "truenas",
+                "display_name": "Display Name",
+                "hostname": "ignored-hostname",
+                "address": "192.0.2.20",
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+            {
+                "id": "hostname",
+                "type": "truenas",
+                "hostname": "truenas-hostname",
+                "address": "192.0.2.21",
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+            {
+                "id": "identifier",
+                "type": "truenas",
+                "address": None,
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+        ]
+
+        expected = [
+            {
+                "id": "display",
+                "display_name": "Display Name",
+                "address": "192.0.2.20",
+            },
+            {
+                "id": "hostname",
+                "display_name": "truenas-hostname",
+                "address": "192.0.2.21",
+            },
+            {
+                "id": "identifier",
+                "display_name": "identifier",
+                "address": None,
+            },
+        ]
+
+        self.assertEqual(
+            normalize_config_truenas_snapshot_hosts(hosts),
+            expected,
+        )
+        self.assertEqual(
+            normalize_config_truenas_replication_hosts(hosts),
+            expected,
+        )
+
+    def test_type_matching_is_case_insensitive_and_ids_are_strings(self):
+        hosts = [
+            {
+                "id": 620,
+                "type": "TrueNAS",
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+            {
+                "id": "upper",
+                "type": "TRUENAS",
+                "modules": {
+                    "snapshots": True,
+                    "replications": True,
+                },
+            },
+        ]
+
+        snapshot_hosts = normalize_config_truenas_snapshot_hosts(
+            hosts
+        )
+        replication_hosts = normalize_config_truenas_replication_hosts(
+            hosts
+        )
+
+        self.assertEqual(
+            [host["id"] for host in snapshot_hosts],
+            ["620", "upper"],
+        )
+        self.assertEqual(
+            [host["display_name"] for host in snapshot_hosts],
+            ["620", "upper"],
+        )
+        self.assertEqual(replication_hosts, snapshot_hosts)
 
 
 class SnapshotCollectorTests(unittest.TestCase):

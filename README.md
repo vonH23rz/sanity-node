@@ -445,6 +445,7 @@ The current tests protect:
 - snapshot freshness decisions, five-minute grace handling, `allow_empty` behavior, and TrueNAS replication execution-state classification
 - snapshot and replication collector error rows, empty-task handling, task sorting, field normalization, and successful row assembly
 - snapshot schedule cron parsing, normal and overnight windows, TrueNAS weekday mapping, and deterministic previous-run searches
+- TrueNAS snapshot and replication host eligibility, explicit module gating, ID requirements, display-name fallbacks, and address preservation
 - assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
 - protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
 
