@@ -22,31 +22,43 @@ Because in a homelab, everything works perfectly until it does not.
 
 ## Current project status
 
-Sanity Node is currently moving from a personal, homelab-tested reference implementation toward a public, configuration-driven project.
+Sanity Node now contains two deliberately separate runtime paths:
 
-The current repository contains the working reference version that has been tested in my own environment. Some logic is still hardcoded for that setup.
+- the original homelab-tested reference dashboard
+- the completed Phase 2F configuration-driven runtime preview
 
-The public direction is now defined:
+The reference dashboard remains available because it is the known-good production view for the original homelab. Phase 2F did not overwrite or silently replace it.
 
-- one Linux / Utility collector node
-- one or more configured hosts
-- optional TrueNAS SCALE monitoring
-- optional local, Docker, HTTP, backup, replication, and update checks
-- a self-documenting `config.yaml`
-- a future Docker Compose install flow on port `8099`
-- host-based public summary preview cards generated from configured hosts
-- a public-preview four-card summary model:
-  - Systems
-  - Storage
-  - Protection
-  - Services / Updates
+**Phase 2F is complete.**
 
-In other words:
+The Phase 2F closure baseline includes:
 
-> It works.
-> It is useful.
-> It is becoming more reusable.
-> No fake perfection.
+- configuration-driven hosts and host-based cards
+- Systems, Storage, Protection, and Services summary cards
+- HTTP, collector-local Docker, and TrueNAS app checks
+- remote Linux Docker checks over explicit host-specific SSH
+- collector-local and remote Linux storage checks
+- collector-local and remote Linux backup-status checks
+- TrueNAS snapshot-task and replication-task collection
+- snapshot and replication overlays for configured protection relationships
+- Diun and TrueNAS-native image-update collection
+- service update overlays with unhealthy-state precedence
+- unreachable-host handling and collector-error classification
+- configuration validation
+- safe preview rendering under `/tmp`
+- **153 deterministic standard-library regression tests**
+
+The repository also includes the public runtime scaffold:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `.env.example`
+- `requirements.txt`
+- `scripts/docker-entrypoint.sh`
+- `scripts/validate-config.py`
+- `scripts/render-preview.sh`
+
+The original hardcoded dashboard and the Phase 2F public preview remain intentionally isolated. Replacing the reference dashboard, publishing a polished installation flow, and adding new monitoring families belong to Phase 3.
 
 ---
 
@@ -148,7 +160,7 @@ The installation tutorial explains the public install direction, requirements, c
 
 [Installing Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity_Node)
 
-The current GitHub repository is still being aligned with that public install direction. Until the Docker/Compose/config-driven version is implemented, treat the installation tutorial as the target architecture for the next public phase.
+The repository now contains the Docker Compose and configuration-driven runtime scaffold. The installation tutorial still needs a final public first-run pass, so treat it as guidance rather than a polished release installer.
 
 ---
 
@@ -200,13 +212,13 @@ scripts/generate-dashboard.py
 
 This includes personal hostnames, IP addresses, services, pool relationships, local paths, and backup targets.
 
-That is intentional for the current reference version. The next major development goal is to move those definitions into `config.yaml`.
+That remains intentional for the original reference path. The Phase 2F public runtime reads its monitoring definitions from `config.yaml`; replacing the reference path is a separate Phase 3 migration rather than unfinished Phase 2F work.
 
 ---
 
 ## Configuration direction
 
-The future public configuration model is represented in:
+The completed Phase 2F public configuration model is represented in:
 
 ```text
 examples/config.example.yaml
@@ -221,7 +233,7 @@ That file is intentionally self-documenting. It uses:
 
 The goal is that users should be able to describe their own homelab without editing the Python code.
 
-Current Phase 2 public-preview behavior:
+Completed Phase 2F configuration-driven behavior:
 
 - configured hosts can appear as host-based summary cards
 - host Web UI links can show preview reachability badges
@@ -254,7 +266,7 @@ Current Phase 2 public-preview behavior:
 - remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
 - live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference checks
-- the original hardcoded five-card reference summary remains untouched while this preview path is developed
+- the original hardcoded five-card reference summary remains untouched; replacing it is outside the completed Phase 2F scope
 
 ### Remote Linux Docker checks
 
@@ -523,7 +535,7 @@ The current tests protect:
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 
-The future model separates:
+The current runtime scaffold separates:
 
 ```text
 docker-compose.yml = how Sanity Node runs
@@ -538,7 +550,7 @@ logs/              = runtime logs
 
 ## Public install direction
 
-The planned public install flow is:
+The current scaffolded public install flow is:
 
 ```text
 git clone
@@ -573,20 +585,29 @@ image update monitoring
 ```
 
 ---
-## Future plans
+## Phase 3 boundary
 
-Planned improvements:
+Phase 2F is closed. The following work is intentionally deferred to Phase 3 and is not considered a Phase 2F loose end:
 
-- configuration-driven hosts
-- additional remote Linux check types beyond Docker, local storage, and backup status
-- additional backup status providers beyond marker files
-- additional protection relationship types beyond replication
-- Docker Compose runtime
-- `.env.example`
-- Dockerfile
-- safer first-run checks
-- public-preview layout refinement for the four global summary cards
-- cleaner separation between personal deployment and public template
+- make the configuration-driven runtime the primary public dashboard path
+- complete and validate a clean end-user installation and first-run guide
+- add safer first-run, credential, and environment checks
+- refine the four global summary cards for the public layout
+- improve separation between the personal reference deployment and public template
+- add optional remote Linux check families beyond Docker, storage, and backup status
+- add backup-status providers beyond marker files
+- add protection relationship types beyond replication
+- decide when the original hardcoded reference path has reached migration parity
+
+New Phase 3 features should continue using the established safeguards:
+
+- narrowly scoped feature branches
+- deterministic tests
+- full regression validation
+- configuration validation
+- preview output only under `/tmp`
+- production dashboard hash and mtime protection
+- preserved remote feature references
 
 ---
 
