@@ -50,6 +50,11 @@ FUNCTIONS_UNDER_TEST = {
     "config_replication_status",
     "collect_config_truenas_snapshot_checks",
     "collect_config_truenas_replication_checks",
+    "parse_cron_field",
+    "parse_clock",
+    "inside_window",
+    "matches_schedule",
+    "previous_run",
 }
 
 
@@ -79,6 +84,7 @@ def load_generator_functions():
 
     namespace = {
         "html": html,
+        "datetime": datetime,
         "timedelta": timedelta,
         "CONFIG": {
             "collector": {
@@ -163,6 +169,18 @@ collect_config_truenas_snapshot_checks = FUNCTIONS[
 ]
 collect_config_truenas_replication_checks = FUNCTIONS[
     "collect_config_truenas_replication_checks"
+]
+parse_cron_field = FUNCTIONS[
+    "parse_cron_field"
+]
+inside_window = FUNCTIONS[
+    "inside_window"
+]
+matches_schedule = FUNCTIONS[
+    "matches_schedule"
+]
+previous_run = FUNCTIONS[
+    "previous_run"
 ]
 
 
@@ -992,6 +1010,245 @@ class StorageSummaryCardTests(unittest.TestCase):
         self.assertIn(
             "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
             card,
+        )
+
+
+class CronFieldParsingTests(unittest.TestCase):
+    def test_wildcard_and_empty_values_cover_full_range(self):
+        expected = set(range(0, 60))
+
+        self.assertEqual(
+            parse_cron_field("*", 0, 59),
+            expected,
+        )
+        self.assertEqual(
+            parse_cron_field("", 0, 59),
+            expected,
+        )
+
+    def test_lists_ranges_steps_and_bounds_are_normalized(self):
+        self.assertEqual(
+            parse_cron_field(
+                "0,15,30-34/2,99",
+                0,
+                59,
+            ),
+            {0, 15, 30, 32, 34},
+        )
+
+    def test_wildcard_steps_and_nonzero_minimum(self):
+        self.assertEqual(
+            parse_cron_field("*/20", 0, 59),
+            {0, 20, 40},
+        )
+        self.assertEqual(
+            parse_cron_field("1-7/2", 1, 7),
+            {1, 3, 5, 7},
+        )
+
+
+class ScheduleWindowTests(unittest.TestCase):
+    def test_normal_window_is_inclusive(self):
+        self.assertTrue(
+            inside_window(
+                datetime(2026, 6, 8, 8, 0),
+                "08:00",
+                "17:00",
+            )
+        )
+        self.assertTrue(
+            inside_window(
+                datetime(2026, 6, 8, 17, 0),
+                "08:00",
+                "17:00",
+            )
+        )
+        self.assertFalse(
+            inside_window(
+                datetime(2026, 6, 8, 7, 59),
+                "08:00",
+                "17:00",
+            )
+        )
+
+    def test_overnight_window_wraps_across_midnight(self):
+        self.assertTrue(
+            inside_window(
+                datetime(2026, 6, 8, 23, 30),
+                "22:00",
+                "06:00",
+            )
+        )
+        self.assertTrue(
+            inside_window(
+                datetime(2026, 6, 9, 5, 30),
+                "22:00",
+                "06:00",
+            )
+        )
+        self.assertFalse(
+            inside_window(
+                datetime(2026, 6, 9, 12, 0),
+                "22:00",
+                "06:00",
+            )
+        )
+
+    def test_equal_begin_and_end_matches_only_that_minute(self):
+        self.assertTrue(
+            inside_window(
+                datetime(2026, 6, 8, 12, 30),
+                "12:30",
+                "12:30",
+            )
+        )
+        self.assertFalse(
+            inside_window(
+                datetime(2026, 6, 8, 12, 31),
+                "12:30",
+                "12:30",
+            )
+        )
+
+
+class ScheduleMatchingTests(unittest.TestCase):
+    def test_matching_schedule_checks_all_fields(self):
+        candidate = datetime(2026, 6, 8, 14, 30)
+
+        schedule = {
+            "minute": "30",
+            "hour": "14",
+            "dom": "8",
+            "month": "6",
+            "dow": "1",
+            "begin": "14:00",
+            "end": "15:00",
+        }
+
+        self.assertTrue(
+            matches_schedule(candidate, schedule)
+        )
+
+    def test_truenas_weekday_mapping_uses_monday_one_sunday_seven(self):
+        monday = datetime(2026, 6, 8, 14, 30)
+        sunday = datetime(2026, 6, 7, 14, 30)
+
+        monday_schedule = {
+            "minute": "30",
+            "hour": "14",
+            "dow": "1",
+        }
+        sunday_schedule = {
+            "minute": "30",
+            "hour": "14",
+            "dow": "7",
+        }
+
+        self.assertTrue(
+            matches_schedule(monday, monday_schedule)
+        )
+        self.assertFalse(
+            matches_schedule(sunday, monday_schedule)
+        )
+        self.assertTrue(
+            matches_schedule(sunday, sunday_schedule)
+        )
+
+    def test_time_window_can_reject_otherwise_matching_cron_fields(self):
+        candidate = datetime(2026, 6, 8, 14, 30)
+
+        schedule = {
+            "minute": "30",
+            "hour": "14",
+            "begin": "15:00",
+            "end": "16:00",
+        }
+
+        self.assertFalse(
+            matches_schedule(candidate, schedule)
+        )
+
+
+class PreviousRunTests(unittest.TestCase):
+    class FrozenDateTime(datetime):
+        current = datetime(2026, 6, 8, 14, 37)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    def setUp(self):
+        self.original_datetime = FUNCTIONS.get("datetime")
+        FUNCTIONS["datetime"] = self.FrozenDateTime
+
+    def tearDown(self):
+        if self.original_datetime is None:
+            FUNCTIONS.pop("datetime", None)
+        else:
+            FUNCTIONS["datetime"] = self.original_datetime
+
+    def test_current_minute_is_returned_when_it_matches(self):
+        self.FrozenDateTime.current = datetime(
+            2026,
+            6,
+            8,
+            14,
+            37,
+            42,
+        )
+
+        result = previous_run(
+            {
+                "minute": "37",
+                "hour": "14",
+            }
+        )
+
+        self.assertEqual(
+            result,
+            datetime(2026, 6, 8, 14, 37),
+        )
+
+    def test_searches_back_to_previous_matching_minute(self):
+        self.FrozenDateTime.current = datetime(
+            2026,
+            6,
+            8,
+            14,
+            37,
+        )
+
+        result = previous_run(
+            {
+                "minute": "30",
+                "hour": "14",
+            }
+        )
+
+        self.assertEqual(
+            result,
+            datetime(2026, 6, 8, 14, 30),
+        )
+
+    def test_search_crosses_midnight(self):
+        self.FrozenDateTime.current = datetime(
+            2026,
+            6,
+            8,
+            0,
+            3,
+        )
+
+        result = previous_run(
+            {
+                "minute": "55",
+                "hour": "23",
+            }
+        )
+
+        self.assertEqual(
+            result,
+            datetime(2026, 6, 7, 23, 55),
         )
 
 
