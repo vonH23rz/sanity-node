@@ -69,7 +69,7 @@ Sanity Node can display and summarize:
 - HTTP-checked services
 - local storage on the collector node
 - Docker container status
-- image update state, for example through Diun
+- image update state through Diun metrics or TrueNAS-native app fields
 
 The dashboard separates services into simple categories:
 
@@ -227,6 +227,7 @@ Current Phase 2 public-preview behavior:
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
 - enabled TrueNAS hosts with `modules.snapshots: true` can report live snapshot-task state and latest-snapshot freshness
 - enabled TrueNAS hosts with `modules.replications: true` can report live replication-task configuration and execution state
+- configured image update sources can report live Diun container-image updates and TrueNAS-native app updates
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
@@ -288,6 +289,36 @@ For each matching host, Sanity Node:
 
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
 
+### Image update monitoring
+
+Configure image update monitoring through explicit sources:
+
+```yaml
+image_updates:
+  enabled: true
+
+  sources:
+    - id: collector-diun
+      host: collector
+      provider: diun
+      url: http://127.0.0.1:9092/metrics
+
+    - id: truenas-main-apps
+      host: truenas-main
+      provider: truenas
+```
+
+Supported providers:
+
+- `diun` reads Prometheus image-check metrics
+- `truenas` reads native app update fields through `midclt call app.query`
+
+The preview reports tracked images or apps, available updates, and update details. `UPDATE` is a maintenance notice, not a service failure.
+
+Diun sources require a metrics URL. TrueNAS sources require an enabled `type: truenas` host with working SSH access.
+
+Image update results do not affect service cards or Overall Status yet.
+
 ### `summary_cards`
 
 The public four-card preview is controlled by the optional `summary_cards` list in `config.yaml`.
@@ -334,6 +365,7 @@ The validator checks:
 - local storage warning and critical thresholds
 - backup marker settings and maximum age values
 - protection relationships and dataset lists
+- image update source IDs, providers, host references, Diun metrics URLs, and TrueNAS host types
 - supported and duplicate `summary_cards` values
 
 Validation errors return exit code `1`. Warnings describe runtime fallback behavior, such as ignored summary cards, but do not fail validation. The validator reads configuration only; it does not generate or overwrite a dashboard.

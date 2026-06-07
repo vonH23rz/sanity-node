@@ -335,20 +335,27 @@ protection:
 # =============================================================================
 # Image update monitoring
 # =============================================================================
-# 🩵 Optional: show UPDATE when a running service has a container image update.
+# 🩵 Optional: report available container or TrueNAS app updates.
 #
-# UPDATE does not mean the service is broken.
-# It means the service is running, but maintenance is available.
+# Supported providers:
+# - diun: reads a Diun Prometheus metrics endpoint
+# - truenas: reads native app update fields through midclt app.query
 #
-# Requires a supported image update source, for example Diun.
+# UPDATE means maintenance is available. It does not mean the service is down.
+# Preview results do not affect service cards or Overall Status yet.
 
 image_updates:
   enabled: false
-  provider: diun
 
-  hosts:
-    - collector
-    - host1
+  sources:
+    - id: collector-diun
+      host: collector
+      provider: diun
+      url: http://127.0.0.1:9092/metrics
+
+    - id: host1-truenas-apps
+      host: host1
+      provider: truenas
 
 
 # =============================================================================

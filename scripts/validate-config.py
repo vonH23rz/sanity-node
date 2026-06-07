@@ -21,6 +21,7 @@ DEFAULT_CONFIG = REPO_ROOT / "examples" / "config.example.yaml"
 SUPPORTED_HOST_TYPES = {"linux", "truenas"}
 SUPPORTED_SERVICE_TYPES = {"app", "helper"}
 SUPPORTED_SERVICE_CHECKS = {"http", "docker", "truenas_app"}
+SUPPORTED_IMAGE_UPDATE_PROVIDERS = {"diun", "truenas"}
 SUPPORTED_SUMMARY_CARDS = {"systems", "storage", "protection", "services"}
 SUPPORTED_TOP_LEVEL_KEYS = {
     "dashboard",
@@ -216,6 +217,7 @@ def validate_config(config: dict) -> Validator:
     hosts = validator.validate_list(hosts_value, "hosts")
     host_ids: set[str] = set()
     enabled_host_ids: set[str] = set()
+    host_types: dict[str, str] = {}
 
     if hosts is not None:
         if not hosts:
@@ -263,6 +265,8 @@ def validate_config(config: dict) -> Validator:
                     f"{path}.type",
                     "must be linux or truenas",
                 )
+            elif host_id is not None and host_type is not None:
+                host_types[host_id] = host_type.lower()
 
             if enabled and host_type and host_type.lower() == "truenas":
                 validator.validate_non_empty_string(
@@ -684,37 +688,115 @@ def validate_config(config: dict) -> Validator:
                 "image_updates",
             )
 
-            if image_updates_enabled:
+            if "provider" in image_updates or "hosts" in image_updates:
                 validator.warning(
                     "image_updates",
-                    "is documented but not active in the current public runtime",
+                    "legacy provider/hosts fields are ignored; use image_updates.sources",
                 )
 
-            if "provider" in image_updates:
-                validator.validate_non_empty_string(
-                    image_updates.get("provider"),
-                    "image_updates.provider",
-                )
+            sources = image_updates.get("sources", [])
 
-            image_hosts = image_updates.get("hosts", [])
-
-            if not isinstance(image_hosts, list):
+            if not isinstance(sources, list):
                 validator.error(
-                    "image_updates.hosts",
+                    "image_updates.sources",
                     "must be a YAML list",
                 )
             else:
-                for index, host_id in enumerate(image_hosts):
-                    host_id = validator.validate_non_empty_string(
-                        host_id,
-                        f"image_updates.hosts[{index}]",
+                if image_updates_enabled and not sources:
+                    validator.error(
+                        "image_updates.sources",
+                        "must contain at least one source when image updates are enabled",
                     )
 
-                    if host_id is not None and host_id not in host_ids:
-                        validator.error(
-                            f"image_updates.hosts[{index}]",
-                            f"references unknown host: {host_id}",
+                source_ids: set[str] = set()
+
+                for index, source_value in enumerate(sources):
+                    source_path = f"image_updates.sources[{index}]"
+                    source = validator.validate_mapping(
+                        source_value,
+                        source_path,
+                    )
+
+                    if source is None:
+                        continue
+
+                    source_id_value = source.get("id")
+
+                    if source_id_value is not None:
+                        source_id = validator.validate_id(
+                            source_id_value,
+                            f"{source_path}.id",
                         )
+
+                        if source_id is not None:
+                            if source_id in source_ids:
+                                validator.error(
+                                    f"{source_path}.id",
+                                    f"duplicate image update source id: {source_id}",
+                                )
+                            else:
+                                source_ids.add(source_id)
+
+                    host_id = validator.validate_non_empty_string(
+                        source.get("host"),
+                        f"{source_path}.host",
+                    )
+
+                    if host_id is not None:
+                        if host_id not in host_ids:
+                            validator.error(
+                                f"{source_path}.host",
+                                f"references unknown host: {host_id}",
+                            )
+                        elif host_id not in enabled_host_ids:
+                            validator.error(
+                                f"{source_path}.host",
+                                f"references disabled host: {host_id}",
+                            )
+
+                    provider = validator.validate_non_empty_string(
+                        source.get("provider"),
+                        f"{source_path}.provider",
+                    )
+
+                    normalized_provider = (
+                        provider.lower()
+                        if provider is not None
+                        else None
+                    )
+
+                    if (
+                        normalized_provider is not None
+                        and normalized_provider
+                        not in SUPPORTED_IMAGE_UPDATE_PROVIDERS
+                    ):
+                        validator.error(
+                            f"{source_path}.provider",
+                            "must be diun or truenas",
+                        )
+
+                    if normalized_provider == "diun":
+                        validator.validate_http_url(
+                            source.get("url"),
+                            f"{source_path}.url",
+                            required=True,
+                        )
+                    elif normalized_provider == "truenas":
+                        if (
+                            host_id is not None
+                            and host_id in host_types
+                            and host_types[host_id] != "truenas"
+                        ):
+                            validator.error(
+                                f"{source_path}.provider",
+                                "truenas provider requires a type: truenas host",
+                            )
+
+                        if "url" in source:
+                            validator.validate_http_url(
+                                source.get("url"),
+                                f"{source_path}.url",
+                            )
 
     summary_cards = validator.validate_list(
         config.get(
