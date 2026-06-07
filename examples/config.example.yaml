@@ -62,6 +62,10 @@ collector:
 # 3. additional enabled hosts
 #
 # Disabled hosts are ignored until enabled.
+#
+# For enabled type: truenas hosts, modules.snapshots: true activates live
+# periodic snapshot-task and latest-snapshot freshness checks over SSH.
+# The host must have an address and working Sanity Node SSH credentials.
 
 hosts:
   # ---------------------------------------------------------------------------
@@ -85,7 +89,7 @@ hosts:
     modules:
       system_info: true          # true/false
       pools: true                # true/false
-      snapshots: true            # true/false
+      snapshots: true            # live task and snapshot freshness check
       replications: false        # true/false
       apps: true                 # true/false
       services: true             # true/false
@@ -117,7 +121,7 @@ hosts:
     modules:
       system_info: true          # true/false
       pools: true                # true/false
-      snapshots: true            # true/false
+      snapshots: true            # live task and snapshot freshness check
       replications: false        # true/false
       apps: false                # true/false
       services: false            # true/false
