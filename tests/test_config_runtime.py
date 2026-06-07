@@ -48,6 +48,8 @@ FUNCTIONS_UNDER_TEST = {
     "build_config_truenas_replication_preview",
     "freshness_status",
     "config_replication_status",
+    "collect_config_truenas_snapshot_checks",
+    "collect_config_truenas_replication_checks",
 }
 
 
@@ -155,6 +157,12 @@ freshness_status = FUNCTIONS[
 ]
 config_replication_status = FUNCTIONS[
     "config_replication_status"
+]
+collect_config_truenas_snapshot_checks = FUNCTIONS[
+    "collect_config_truenas_snapshot_checks"
+]
+collect_config_truenas_replication_checks = FUNCTIONS[
+    "collect_config_truenas_replication_checks"
 ]
 
 
@@ -984,6 +992,377 @@ class StorageSummaryCardTests(unittest.TestCase):
         self.assertIn(
             "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
             card,
+        )
+
+
+class SnapshotCollectorTests(unittest.TestCase):
+    dependency_names = (
+        "remote_json",
+        "collect_snapshots",
+        "latest_snapshot",
+        "freshness_status",
+        "short_snapshot",
+        "fmt_dt",
+    )
+
+    def setUp(self):
+        self.original_dependencies = {
+            name: FUNCTIONS.get(name)
+            for name in self.dependency_names
+        }
+
+    def tearDown(self):
+        for name, value in self.original_dependencies.items():
+            if value is None:
+                FUNCTIONS.pop(name, None)
+            else:
+                FUNCTIONS[name] = value
+
+    @staticmethod
+    def host(address="192.0.2.10"):
+        return {
+            "id": "t620",
+            "display_name": "T620 TrueNAS",
+            "address": address,
+        }
+
+    def test_missing_address_returns_unknown_row_and_error(self):
+        rows, errors = collect_config_truenas_snapshot_checks(
+            [self.host(address=None)]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["host_id"], "t620")
+        self.assertEqual(rows[0]["task_enabled"], None)
+        self.assertEqual(rows[0]["label"], "UNKNOWN")
+        self.assertEqual(rows[0]["raw"], "missing host address")
+        self.assertEqual(errors, ["t620: missing host address"])
+
+    def test_query_failure_and_malformed_response_return_error_rows(self):
+        cases = [
+            (
+                (None, "SSH connection timed out"),
+                "snapshot task query failed",
+                "t620: SSH connection timed out",
+            ),
+            (
+                ({"unexpected": "mapping"}, None),
+                "unexpected snapshot task response",
+                "t620: snapshot task query did not return a list",
+            ),
+        ]
+
+        for remote_result, expected_raw, expected_error in cases:
+            with self.subTest(remote_result=remote_result):
+                FUNCTIONS["remote_json"] = (
+                    lambda ip, command, result=remote_result: result
+                )
+
+                rows, errors = collect_config_truenas_snapshot_checks(
+                    [self.host()]
+                )
+
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["task_enabled"], None)
+                self.assertEqual(rows[0]["label"], "UNKNOWN")
+                self.assertEqual(rows[0]["raw"], expected_raw)
+                self.assertEqual(errors, [expected_error])
+
+    def test_empty_task_inventory_returns_info_row(self):
+        FUNCTIONS["remote_json"] = lambda ip, command: ([], None)
+        FUNCTIONS["collect_snapshots"] = lambda ip: ({}, None)
+
+        rows, errors = collect_config_truenas_snapshot_checks(
+            [self.host()]
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["task_enabled"], None)
+        self.assertEqual(rows[0]["label"], "INFO")
+        self.assertEqual(
+            rows[0]["raw"],
+            "no snapshot tasks configured",
+        )
+
+    def test_snapshot_inventory_failure_marks_tasks_unknown(self):
+        FUNCTIONS["remote_json"] = lambda ip, command: (
+            [
+                {
+                    "dataset": "tank/apps",
+                    "enabled": True,
+                }
+            ],
+            None,
+        )
+        FUNCTIONS["collect_snapshots"] = lambda ip: (
+            {},
+            "zfs snapshot query failed",
+        )
+        FUNCTIONS["short_snapshot"] = lambda name: "-"
+        FUNCTIONS["fmt_dt"] = lambda value: "-"
+
+        rows, errors = collect_config_truenas_snapshot_checks(
+            [self.host()]
+        )
+
+        self.assertEqual(
+            errors,
+            ["t620: zfs snapshot query failed"],
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["dataset"], "tank/apps")
+        self.assertTrue(rows[0]["task_enabled"])
+        self.assertEqual(rows[0]["label"], "UNKNOWN")
+        self.assertEqual(rows[0]["css"], "info")
+        self.assertEqual(
+            rows[0]["raw"],
+            "snapshot inventory query failed",
+        )
+
+    def test_successful_tasks_are_sorted_and_assembled(self):
+        apps_dt = datetime(2026, 6, 7, 11, 55)
+        media_dt = datetime(2026, 6, 7, 11, 50)
+
+        FUNCTIONS["remote_json"] = lambda ip, command: (
+            [
+                {
+                    "dataset": "tank/media",
+                    "enabled": False,
+                },
+                {
+                    "dataset": "tank/apps",
+                    "enabled": True,
+                },
+            ],
+            None,
+        )
+        FUNCTIONS["collect_snapshots"] = lambda ip: (
+            {"inventory": "available"},
+            None,
+        )
+
+        latest_by_dataset = {
+            "tank/apps": ("tank/apps@auto-apps", apps_dt),
+            "tank/media": ("tank/media@auto-media", media_dt),
+        }
+        FUNCTIONS["latest_snapshot"] = (
+            lambda snapshots, dataset: latest_by_dataset[dataset]
+        )
+        FUNCTIONS["freshness_status"] = (
+            lambda task, latest_dt: (
+                ("OK", "ok", "fresh enough")
+                if task.get("enabled")
+                else (
+                    "DISABLED",
+                    "disabled",
+                    "snapshot task disabled",
+                )
+            )
+        )
+        FUNCTIONS["short_snapshot"] = (
+            lambda name: name.split("@", 1)[1]
+        )
+        FUNCTIONS["fmt_dt"] = (
+            lambda value: value.strftime("%Y-%m-%d %H:%M")
+        )
+
+        rows, errors = collect_config_truenas_snapshot_checks(
+            [self.host()]
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [row["dataset"] for row in rows],
+            ["tank/apps", "tank/media"],
+        )
+        self.assertEqual(rows[0]["latest"], "auto-apps")
+        self.assertEqual(
+            rows[0]["latest_time"],
+            "2026-06-07 11:55",
+        )
+        self.assertEqual(rows[0]["label"], "OK")
+        self.assertTrue(rows[0]["task_enabled"])
+        self.assertEqual(rows[1]["latest"], "auto-media")
+        self.assertEqual(rows[1]["label"], "DISABLED")
+        self.assertFalse(rows[1]["task_enabled"])
+
+
+class ReplicationCollectorTests(unittest.TestCase):
+    dependency_names = (
+        "remote_json",
+        "config_replication_status",
+        "parse_datetime",
+        "fmt_dt",
+    )
+
+    def setUp(self):
+        self.original_dependencies = {
+            name: FUNCTIONS.get(name)
+            for name in self.dependency_names
+        }
+
+    def tearDown(self):
+        for name, value in self.original_dependencies.items():
+            if value is None:
+                FUNCTIONS.pop(name, None)
+            else:
+                FUNCTIONS[name] = value
+
+    @staticmethod
+    def host(address="192.0.2.10"):
+        return {
+            "id": "t620",
+            "display_name": "T620 TrueNAS",
+            "address": address,
+        }
+
+    def test_missing_address_returns_unknown_row_and_error(self):
+        rows, errors = collect_config_truenas_replication_checks(
+            [self.host(address=None)]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["host_id"], "t620")
+        self.assertEqual(rows[0]["task_enabled"], None)
+        self.assertEqual(rows[0]["label"], "UNKNOWN")
+        self.assertEqual(rows[0]["raw"], "missing host address")
+        self.assertEqual(errors, ["t620: missing host address"])
+
+    def test_query_failure_and_malformed_response_return_error_rows(self):
+        cases = [
+            (
+                (None, "No route to host"),
+                "replication task query failed",
+                "t620: No route to host",
+            ),
+            (
+                ({"unexpected": "mapping"}, None),
+                "unexpected replication task response",
+                "t620: replication task query did not return a list",
+            ),
+        ]
+
+        for remote_result, expected_raw, expected_error in cases:
+            with self.subTest(remote_result=remote_result):
+                FUNCTIONS["remote_json"] = (
+                    lambda ip, command, result=remote_result: result
+                )
+
+                rows, errors = collect_config_truenas_replication_checks(
+                    [self.host()]
+                )
+
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["task_enabled"], None)
+                self.assertEqual(rows[0]["label"], "UNKNOWN")
+                self.assertEqual(rows[0]["raw"], expected_raw)
+                self.assertEqual(errors, [expected_error])
+
+    def test_empty_task_inventory_returns_info_row(self):
+        FUNCTIONS["remote_json"] = lambda ip, command: ([], None)
+
+        rows, errors = collect_config_truenas_replication_checks(
+            [self.host()]
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["task_enabled"], None)
+        self.assertEqual(rows[0]["label"], "INFO")
+        self.assertEqual(
+            rows[0]["raw"],
+            "no replication tasks configured",
+        )
+
+    def test_successful_tasks_are_sorted_and_normalized(self):
+        FUNCTIONS["remote_json"] = lambda ip, command: (
+            [
+                {
+                    "id": 20,
+                    "name": "Zeta replication",
+                    "enabled": False,
+                    "direction": "push",
+                    "transport": "ssh",
+                    "source_datasets": "tank/media",
+                    "target_dataset": "backup/t620/media",
+                    "state": {
+                        "state": "PAUSED",
+                        "datetime": "zeta-time",
+                        "last_snapshot": "tank/media@zeta",
+                    },
+                },
+                {
+                    "name": "alpha replication",
+                    "enabled": True,
+                    "direction": "pull",
+                    "transport": "local",
+                    "source_datasets": [
+                        "tank/apps",
+                        "",
+                    ],
+                    "target_dataset": "backup/t620/apps",
+                    "state": {
+                        "state": "FINISHED",
+                        "datetime": "alpha-time",
+                        "last_snapshot": "tank/apps@alpha",
+                    },
+                },
+            ],
+            None,
+        )
+        FUNCTIONS["parse_datetime"] = (
+            lambda value: f"parsed:{value}"
+        )
+        FUNCTIONS["fmt_dt"] = (
+            lambda value: f"formatted:{value}"
+        )
+        FUNCTIONS["config_replication_status"] = (
+            config_replication_status
+        )
+
+        rows, errors = collect_config_truenas_replication_checks(
+            [self.host()]
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            [row["name"] for row in rows],
+            ["alpha replication", "Zeta replication"],
+        )
+
+        alpha, zeta = rows
+
+        self.assertEqual(alpha["task_id"], "1")
+        self.assertTrue(alpha["task_enabled"])
+        self.assertEqual(alpha["direction"], "PULL")
+        self.assertEqual(alpha["transport"], "LOCAL")
+        self.assertEqual(alpha["source_datasets"], ["tank/apps"])
+        self.assertEqual(alpha["execution_state"], "FINISHED")
+        self.assertEqual(alpha["label"], "OK")
+        self.assertEqual(
+            alpha["execution_time"],
+            "formatted:parsed:alpha-time",
+        )
+        self.assertEqual(
+            alpha["last_snapshot"],
+            "tank/apps@alpha",
+        )
+
+        self.assertEqual(zeta["task_id"], "20")
+        self.assertFalse(zeta["task_enabled"])
+        self.assertEqual(zeta["direction"], "PUSH")
+        self.assertEqual(zeta["transport"], "SSH")
+        self.assertEqual(
+            zeta["source_datasets"],
+            ["tank/media"],
+        )
+        self.assertEqual(zeta["execution_state"], "PAUSED")
+        self.assertEqual(zeta["label"], "DISABLED")
+        self.assertEqual(zeta["css"], "disabled")
+        self.assertEqual(
+            zeta["raw"],
+            "replication task disabled",
         )
 
 

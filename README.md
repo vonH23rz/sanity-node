@@ -443,6 +443,7 @@ The current tests protect:
 - Storage, Protection, and Services summary-card empty states, counts, severity precedence, detail rendering, and multi-column behavior
 - TrueNAS snapshot and replication preview empty states, host/task counts, task and execution badges, dataset details, and HTML escaping
 - snapshot freshness decisions, five-minute grace handling, `allow_empty` behavior, and TrueNAS replication execution-state classification
+- snapshot and replication collector error rows, empty-task handling, task sorting, field normalization, and successful row assembly
 - assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
 - protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
 
