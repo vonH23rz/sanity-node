@@ -24,6 +24,10 @@ FUNCTIONS_UNDER_TEST = {
     "classify_collector_error",
     "build_collector_errors_section",
     "config_host_service_unreachable",
+    "build_service_summary",
+    "normalize_public_summary_cards",
+    "build_compact_host_service_details",
+    "build_public_host_summary_preview",
     "status_text_class",
     "h",
     "badge",
@@ -94,6 +98,15 @@ build_collector_errors_section = FUNCTIONS[
 ]
 config_host_service_unreachable = FUNCTIONS[
     "config_host_service_unreachable"
+]
+normalize_public_summary_cards = FUNCTIONS[
+    "normalize_public_summary_cards"
+]
+build_compact_host_service_details = FUNCTIONS[
+    "build_compact_host_service_details"
+]
+build_public_host_summary_preview = FUNCTIONS[
+    "build_public_host_summary_preview"
 ]
 config_system_host_status = FUNCTIONS[
     "config_system_host_status"
@@ -584,6 +597,279 @@ class HostServiceUnreachableTests(unittest.TestCase):
                 statuses,
             )
         )
+
+
+class PublicSummaryCardNormalizationTests(unittest.TestCase):
+    def test_valid_cards_are_normalized_and_deduplicated(self):
+        self.assertEqual(
+            normalize_public_summary_cards(
+                [
+                    " Services ",
+                    "systems",
+                    "SERVICES",
+                    "unknown",
+                    "storage",
+                ]
+            ),
+            ["services", "systems", "storage"],
+        )
+
+    def test_empty_or_invalid_selection_uses_default_cards(self):
+        expected = [
+            "systems",
+            "storage",
+            "protection",
+            "services",
+        ]
+
+        self.assertEqual(
+            normalize_public_summary_cards([]),
+            expected,
+        )
+        self.assertEqual(
+            normalize_public_summary_cards(None),
+            expected,
+        )
+        self.assertEqual(
+            normalize_public_summary_cards(["unknown"]),
+            expected,
+        )
+
+
+class CompactHostServiceDetailsTests(unittest.TestCase):
+    def setUp(self):
+        self.services = [
+            {
+                "id": "healthy",
+                "host": "collector",
+                "display": "Healthy Service",
+                "type": "app",
+                "check": "http",
+            },
+            {
+                "id": "update",
+                "host": "collector",
+                "display": "Update Service",
+                "type": "app",
+                "check": "docker",
+                "url": "http://example.test/update",
+            },
+            {
+                "id": "down",
+                "host": "collector",
+                "display": "Down Service",
+                "type": "helper",
+                "check": "docker",
+            },
+        ]
+
+    def test_compact_details_show_only_non_up_services(self):
+        statuses = {
+            "healthy": {
+                "label": "UP",
+                "css": "ok",
+                "raw": "healthy",
+            },
+            "update": {
+                "label": "UPDATE",
+                "css": "info",
+                "raw": "update available",
+            },
+            "down": {
+                "label": "DOWN",
+                "css": "bad",
+                "raw": "stopped",
+            },
+        }
+
+        result = build_compact_host_service_details(
+            self.services,
+            statuses,
+        )
+
+        self.assertEqual(result["exceptions"], 2)
+        self.assertNotIn("Healthy Service", result["details"])
+        self.assertIn("Update Service", result["details"])
+        self.assertIn("UPDATE", result["details"])
+        self.assertIn("Down Service", result["details"])
+        self.assertIn("DOWN", result["details"])
+        self.assertIn(
+            'href="http://example.test/update"',
+            result["details"],
+        )
+
+    def test_all_up_services_render_one_compact_success_line(self):
+        statuses = {
+            service["id"]: {
+                "label": "UP",
+                "css": "ok",
+                "raw": "healthy",
+            }
+            for service in self.services
+        }
+
+        result = build_compact_host_service_details(
+            self.services,
+            statuses,
+        )
+
+        self.assertEqual(result["exceptions"], 0)
+        self.assertIn("Configured services", result["details"])
+        self.assertIn("ALL UP", result["details"])
+        self.assertNotIn("Healthy Service", result["details"])
+        self.assertNotIn("Update Service", result["details"])
+        self.assertNotIn("Down Service", result["details"])
+
+    def test_empty_service_list_returns_empty_details(self):
+        self.assertEqual(
+            build_compact_host_service_details([], {}),
+            {
+                "details": "",
+                "details_class": "",
+                "exceptions": 0,
+            },
+        )
+
+
+class HostSummaryCompactRenderingTests(unittest.TestCase):
+    def setUp(self):
+        self.host = {
+            "id": "collector",
+            "type": "linux",
+            "display_name": "Utility Node",
+            "enabled": True,
+        }
+        self.services = [
+            {
+                "id": "healthy",
+                "host": "collector",
+                "display": "Healthy Service",
+                "type": "app",
+                "check": "http",
+            },
+            {
+                "id": "update",
+                "host": "collector",
+                "display": "Update Service",
+                "type": "helper",
+                "check": "docker",
+            },
+        ]
+        self.statuses = {
+            "healthy": {
+                "label": "UP",
+                "css": "ok",
+                "raw": "HTTP 200",
+            },
+            "update": {
+                "label": "UPDATE",
+                "css": "info",
+                "raw": "update available",
+            },
+        }
+        self.web_statuses = {
+            "collector": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "HTTP 200",
+            }
+        }
+
+    def test_services_card_active_compacts_host_details(self):
+        html_output = build_public_host_summary_preview(
+            [self.host],
+            self.services,
+            self.statuses,
+            self.web_statuses,
+            ["systems", "services"],
+        )
+
+        self.assertIn(
+            "1 Apps · 1 Helpers · 1 UP · 0 DOWN · 1 UPDATE",
+            html_output,
+        )
+        self.assertIn("Update Service", html_output)
+        self.assertNotIn("Healthy Service", html_output)
+
+    def test_services_card_disabled_preserves_full_host_details(self):
+        html_output = build_public_host_summary_preview(
+            [self.host],
+            self.services,
+            self.statuses,
+            self.web_statuses,
+            ["systems"],
+        )
+
+        self.assertIn("Healthy Service", html_output)
+        self.assertIn("Update Service", html_output)
+
+    def test_default_card_fallback_compacts_host_details(self):
+        html_output = build_public_host_summary_preview(
+            [self.host],
+            self.services,
+            self.statuses,
+            self.web_statuses,
+            [],
+        )
+
+        self.assertIn("Update Service", html_output)
+        self.assertNotIn("Healthy Service", html_output)
+
+    def test_unreachable_host_collapse_takes_precedence(self):
+        host = {
+            "id": "t620",
+            "type": "truenas",
+            "display_name": "T620 TrueNAS",
+            "enabled": True,
+        }
+        services = [
+            {
+                "id": "jellyfin",
+                "host": "t620",
+                "display": "Jellyfin",
+                "type": "app",
+                "check": "truenas_app",
+            },
+            {
+                "id": "redis",
+                "host": "t620",
+                "display": "Redis",
+                "type": "helper",
+                "check": "truenas_app",
+            },
+        ]
+        statuses = {
+            "jellyfin": {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "Connection timed out",
+            },
+            "redis": {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "Connection timed out",
+            },
+        }
+
+        html_output = build_public_host_summary_preview(
+            [host],
+            services,
+            statuses,
+            {
+                "t620": {
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "HTTP 200",
+                }
+            },
+            ["services"],
+        )
+
+        self.assertIn("Host unreachable", html_output)
+        self.assertIn("UNREACHABLE", html_output)
+        self.assertIn("UNAVAILABLE", html_output)
+        self.assertNotIn("Jellyfin", html_output)
+        self.assertNotIn("Redis", html_output)
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):
