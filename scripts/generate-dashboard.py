@@ -1478,6 +1478,368 @@ def build_config_truenas_snapshot_preview(rows):
 """
 
 
+def normalize_config_truenas_replication_hosts(hosts):
+    normalized = []
+
+    for host in enabled_items(hosts):
+        if not isinstance(host, dict):
+            continue
+
+        if str(host.get("type") or "").lower() != "truenas":
+            continue
+
+        modules = host.get("modules") or {}
+
+        if not isinstance(modules, dict):
+            continue
+
+        if modules.get("replications") is not True:
+            continue
+
+        host_id = str(host.get("id") or "")
+
+        if not host_id:
+            continue
+
+        normalized.append({
+            "id": host_id,
+            "display_name": str(
+                host.get("display_name")
+                or host.get("hostname")
+                or host_id
+            ),
+            "address": host.get("address"),
+        })
+
+    return normalized
+
+
+def config_replication_status(task):
+    if not task.get("enabled", True):
+        return "DISABLED", "disabled", "replication task disabled"
+
+    state = task.get("state") or {}
+
+    if not isinstance(state, dict):
+        return "UNKNOWN", "warning", "unexpected replication state response"
+
+    state_name = str(state.get("state") or "UNKNOWN").upper()
+    state_error = state.get("error")
+
+    if state_name in ("FINISHED", "SUCCESS"):
+        return "OK", "ok", "last execution finished"
+
+    if state_name in ("RUNNING", "PENDING", "WAITING"):
+        return state_name, "info", f"replication task is {state_name.lower()}"
+
+    if state_name in ("HOLD", "PAUSED"):
+        return state_name, "warning", f"replication task is {state_name.lower()}"
+
+    if state_name in ("FAILED", "ERROR", "ABORTED"):
+        return (
+            "CRITICAL",
+            "bad",
+            str(state_error or f"last execution state: {state_name.lower()}"),
+        )
+
+    return "UNKNOWN", "warning", f"execution state: {state_name.lower()}"
+
+
+def collect_config_truenas_replication_checks(hosts):
+    rows = []
+    errors = []
+
+    for host in hosts:
+        host_id = host["id"]
+        host_name = host["display_name"]
+        address = host.get("address")
+
+        if not address:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "task_id": "-",
+                "name": "-",
+                "task_enabled": None,
+                "direction": "-",
+                "transport": "-",
+                "source_datasets": [],
+                "target_dataset": "-",
+                "execution_state": "-",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "missing host address",
+            })
+            errors.append(f"{host_id}: missing host address")
+            continue
+
+        tasks, task_error = remote_json(
+            str(address),
+            "midclt call replication.query",
+        )
+
+        if task_error:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "task_id": "-",
+                "name": "-",
+                "task_enabled": None,
+                "direction": "-",
+                "transport": "-",
+                "source_datasets": [],
+                "target_dataset": "-",
+                "execution_state": "-",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "replication task query failed",
+            })
+            errors.append(f"{host_id}: {task_error}")
+            continue
+
+        if not isinstance(tasks, list):
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "task_id": "-",
+                "name": "-",
+                "task_enabled": None,
+                "direction": "-",
+                "transport": "-",
+                "source_datasets": [],
+                "target_dataset": "-",
+                "execution_state": "-",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "unexpected replication task response",
+            })
+            errors.append(
+                f"{host_id}: replication task query did not return a list"
+            )
+            continue
+
+        task_items = [
+            task for task in tasks
+            if isinstance(task, dict)
+        ]
+
+        if not task_items:
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "task_id": "-",
+                "name": "-",
+                "task_enabled": None,
+                "direction": "-",
+                "transport": "-",
+                "source_datasets": [],
+                "target_dataset": "-",
+                "execution_state": "-",
+                "execution_time": "-",
+                "last_snapshot": "-",
+                "label": "INFO",
+                "css": "info",
+                "raw": "no replication tasks configured",
+            })
+            continue
+
+        for index, task in enumerate(
+            sorted(
+                task_items,
+                key=lambda item: (
+                    str(item.get("name") or "").lower(),
+                    str(item.get("id") or ""),
+                ),
+            ),
+            start=1,
+        ):
+            state = task.get("state") or {}
+
+            if not isinstance(state, dict):
+                state = {}
+
+            source_datasets = task.get("source_datasets") or []
+
+            if not isinstance(source_datasets, list):
+                source_datasets = [str(source_datasets)]
+
+            source_datasets = [
+                str(dataset)
+                for dataset in source_datasets
+                if str(dataset)
+            ]
+
+            execution_state = str(
+                state.get("state") or "UNKNOWN"
+            ).upper()
+
+            label, css, note = config_replication_status(task)
+
+            rows.append({
+                "host_id": host_id,
+                "host_name": host_name,
+                "task_id": str(task.get("id") or index),
+                "name": str(
+                    task.get("name")
+                    or f"Replication Task {index}"
+                ),
+                "task_enabled": bool(task.get("enabled", True)),
+                "direction": str(
+                    task.get("direction") or "-"
+                ).upper(),
+                "transport": str(
+                    task.get("transport") or "-"
+                ).upper(),
+                "source_datasets": source_datasets,
+                "target_dataset": str(
+                    task.get("target_dataset") or "-"
+                ),
+                "execution_state": execution_state,
+                "execution_time": fmt_dt(
+                    parse_datetime(state.get("datetime"))
+                ),
+                "last_snapshot": str(
+                    state.get("last_snapshot") or "-"
+                ),
+                "label": label,
+                "css": css,
+                "raw": note,
+            })
+
+    return rows, errors
+
+
+def build_config_truenas_replication_preview(rows):
+    if not rows:
+        return ""
+
+    host_count = len({
+        row.get("host_id")
+        for row in rows
+        if row.get("host_id")
+    })
+    task_count = len([
+        row for row in rows
+        if row.get("task_enabled") is not None
+    ])
+
+    host_word = "host" if host_count == 1 else "hosts"
+    task_word = "task" if task_count == 1 else "tasks"
+
+    table_rows = ""
+
+    for row in rows:
+        task_enabled = row.get("task_enabled")
+
+        if task_enabled is None:
+            task_state_html = "-"
+        elif task_enabled:
+            task_state_html = badge("ENABLED", "ok")
+        else:
+            task_state_html = badge("DISABLED", "info")
+
+        execution_state = row.get("execution_state") or "-"
+
+        if execution_state in ("FINISHED", "SUCCESS"):
+            execution_css = "ok"
+        elif execution_state in ("RUNNING", "PENDING", "WAITING"):
+            execution_css = "info"
+        elif execution_state in ("HOLD", "PAUSED"):
+            execution_css = "warning"
+        elif execution_state in ("FAILED", "ERROR", "ABORTED"):
+            execution_css = "bad"
+        else:
+            execution_css = "info"
+
+        if execution_state == "-":
+            execution_state_html = "-"
+        else:
+            execution_state_html = badge(
+                execution_state,
+                execution_css,
+            )
+
+        source_datasets = row.get("source_datasets") or []
+
+        if source_datasets:
+            source_html = "<br>".join(
+                f'<span class="mono">{h(dataset)}</span>'
+                for dataset in source_datasets
+            )
+        else:
+            source_html = '<span class="mono">-</span>'
+
+        direction = row.get("direction") or "-"
+        transport = row.get("transport") or "-"
+
+        if direction == "-" and transport == "-":
+            mode_html = "-"
+        else:
+            mode_html = (
+                f'<span class="mono">{h(direction)}</span>'
+                f'<br><span class="muted-small">{h(transport)}</span>'
+            )
+
+        task_and_state_html = task_state_html
+
+        if execution_state_html != "-":
+            task_and_state_html += f"<br>{execution_state_html}"
+
+        last_snapshot = row.get("last_snapshot") or "-"
+
+        table_rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+        <td>{h(row.get("host_name", "-"))}</td>
+        <td>
+          <strong>{h(row.get("name", "-"))}</strong>
+          <br><span class="muted-small">ID {h(row.get("task_id", "-"))}</span>
+        </td>
+        <td>{source_html}</td>
+        <td><span class="mono">{h(row.get("target_dataset", "-"))}</span></td>
+        <td>{mode_html}</td>
+        <td>{task_and_state_html}</td>
+        <td>{h(row.get("execution_time", "-"))}</td>
+        <td><span class="mono">{h(last_snapshot)}</span></td>
+        <td>{h(row.get("raw", "-"))}</td>
+      </tr>
+"""
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured TrueNAS Replication Tasks</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(task_count)} {h(task_word)}</div>
+    </div>
+    <p class="muted-small">Live replication-task checks are active for enabled TrueNAS hosts with modules.replications set to true. These preview results do not affect Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Status</th>
+        <th>Host</th>
+        <th>Replication</th>
+        <th>Source</th>
+        <th>Target</th>
+        <th>Mode</th>
+        <th>Task / State</th>
+        <th>Last Execution</th>
+        <th>Last Snapshot</th>
+        <th>Result</th>
+      </tr>
+      {table_rows}
+    </table>
+  </div>
+"""
+
+
 def configured_host_key(host):
     return str(host.get("id") or host.get("display_name") or host.get("hostname") or host.get("address") or "")
 
@@ -3233,6 +3595,36 @@ if config_truenas_snapshot_hosts:
         f"{len(config_truenas_snapshot_hosts)}"
     )
 
+config_truenas_replication_hosts = normalize_config_truenas_replication_hosts(
+    CONFIG_HOSTS
+)
+config_truenas_replication_rows, config_truenas_replication_errors = (
+    collect_config_truenas_replication_checks(
+        config_truenas_replication_hosts,
+    )
+)
+
+for error in config_truenas_replication_errors:
+    collection_errors.append(
+        ("Configured TrueNAS replication query", error)
+    )
+
+config_truenas_replication_preview_html = (
+    build_config_truenas_replication_preview(
+        config_truenas_replication_rows,
+    )
+)
+
+if config_truenas_replication_hosts:
+    print(
+        "Configured TrueNAS replication hosts checked: "
+        f"{len(config_truenas_replication_hosts)}"
+    )
+    print(
+        "Configured TrueNAS replication tasks discovered: "
+        f"{len([row for row in config_truenas_replication_rows if row.get('task_enabled') is not None])}"
+    )
+
 config_local_storage_checks = normalize_config_local_storage_checks(CONFIG_ENABLED_LOCAL_STORAGE)
 config_local_storage_statuses = collect_config_local_storage_checks(config_local_storage_checks)
 config_local_storage_preview_html = build_config_local_storage_preview(
@@ -4380,6 +4772,8 @@ pre, .mono {{
   {configured_hosts_preview_html}
 
   {config_truenas_snapshot_preview_html}
+
+  {config_truenas_replication_preview_html}
 
   {config_protection_preview_html}
 
