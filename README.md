@@ -238,12 +238,15 @@ Current Phase 2 public-preview behavior:
 - Collector Errors include a classified Type badge for timeouts, network failures, host-key problems, authentication failures, refused connections, parsing failures, command failures, unknown messages, and other errors
 - all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
+- replication relationships can inherit live task status when source host, configured datasets, and target prefix confidently match a discovered TrueNAS replication task
+- unmatched or incomplete relationships retain their configuration-preview status instead of being treated as failures
 - configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
 - when the four-card Services summary is active, host-based cards retain their service counts but show only non-`UP` service exceptions; fully healthy hosts show one `ALL UP` line
 - when the Services summary is disabled, host-based cards retain the full per-service detail list
 - Docker checks for other hosts, TrueNAS app checks on non-TrueNAS hosts, local storage checks for non-collector hosts, and backup checks for non-collector hosts are shown as `NOT CHECKED` for now
-- protection relationships are preview documentation/status data for now and do not replace the original reference replication checks yet
+- live replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference replication checks
+- snapshot results remain separate from configured protection relationships for now
 - the original hardcoded five-card reference summary remains untouched while this preview path is developed
 
 ### TrueNAS snapshot checks
@@ -297,6 +300,8 @@ For each matching host, Sanity Node:
 - reports when no replication tasks are configured
 
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
+
+Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configuration-preview status.
 
 ### Image update monitoring
 
@@ -362,7 +367,9 @@ To avoid rendering the same complete service inventory twice, host-based cards u
 
 The Systems card normally reflects each enabled host's Web UI check. When all configured TrueNAS app checks for a host are `UNKNOWN` because of a recognized SSH or network timeout, that host is instead shown as `UNREACHABLE` and counted as `DOWN`. Authentication failures, host-key failures, connection refusal, parsing errors, partial app success, Linux hosts, and HTTP-only hosts retain the existing Web UI-based Systems status.
 
-This propagation is preview-only and does not affect Overall Status or the original hardcoded summary cards.
+The Protection card normally reflects configuration completeness. Confidently matched live replication tasks can replace `CONFIGURED` with their current live status. A live `OK` relationship still counts as configured; warning and failure states retain their normal severity precedence.
+
+These propagations are preview-only and do not affect Overall Status or the original hardcoded summary cards.
 
 ### Configuration validation
 
@@ -435,6 +442,7 @@ The current tests protect:
 - compact host-service exception rendering, `ALL UP` output, full-detail fallback, and unreachable-host precedence
 - Storage, Protection, and Services summary-card empty states, counts, severity precedence, detail rendering, and multi-column behavior
 - assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
+- protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
 
 The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
 

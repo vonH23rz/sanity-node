@@ -1202,6 +1202,124 @@ def collect_config_protection_relationships(relationships):
     return statuses
 
 
+def config_replication_row_matches_relationship(relationship, row):
+    if str(relationship.get("type") or "").lower() != "replication":
+        return False
+
+    source_host = str(relationship.get("source_host") or "")
+    row_host = str(row.get("host_id") or "")
+
+    if not source_host or row_host != source_host:
+        return False
+
+    if row.get("task_enabled") is None:
+        return False
+
+    configured_datasets = {
+        str(dataset).strip().rstrip("/")
+        for dataset in relationship.get("datasets") or []
+        if str(dataset).strip()
+    }
+    row_datasets = {
+        str(dataset).strip().rstrip("/")
+        for dataset in row.get("source_datasets") or []
+        if str(dataset).strip()
+    }
+
+    if not configured_datasets:
+        return False
+
+    if not configured_datasets.issubset(row_datasets):
+        return False
+
+    target_prefix = str(
+        relationship.get("target_prefix") or ""
+    ).strip().rstrip("/")
+    target_dataset = str(
+        row.get("target_dataset") or ""
+    ).strip().rstrip("/")
+
+    if (
+        not target_prefix
+        or not target_dataset
+        or target_dataset == "-"
+    ):
+        return False
+
+    return (
+        target_dataset == target_prefix
+        or target_dataset.startswith(target_prefix + "/")
+    )
+
+
+def apply_config_protection_replication_overlay(
+    relationships,
+    statuses,
+    replication_rows,
+):
+    updated = {
+        relationship_id: dict(status)
+        for relationship_id, status in statuses.items()
+    }
+    severity = {
+        "bad": 4,
+        "warning": 3,
+        "info": 2,
+        "disabled": 2,
+        "ok": 1,
+    }
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        current = updated.get(
+            relationship_id,
+            {"label": "UNKNOWN", "css": "info", "raw": "-"},
+        )
+
+        if current.get("label") != "CONFIGURED":
+            continue
+
+        matches = [
+            row
+            for row in replication_rows
+            if config_replication_row_matches_relationship(
+                relationship,
+                row,
+            )
+        ]
+
+        if not matches:
+            continue
+
+        selected = max(
+            matches,
+            key=lambda row: severity.get(
+                row.get("css", "info"),
+                2,
+            ),
+        )
+        label = selected.get("label", "UNKNOWN")
+        css = selected.get("css", "info")
+        task_name = (
+            selected.get("name")
+            or selected.get("task_id")
+            or "replication task"
+        )
+        raw = selected.get("raw", "-")
+        match_word = "task" if len(matches) == 1 else "tasks"
+
+        updated[relationship_id] = {
+            "label": label,
+            "css": css,
+            "raw": (
+                f"live replication · {len(matches)} matching "
+                f"{match_word} · {task_name}: {raw}"
+            ),
+        }
+
+    return updated
+
+
 def build_config_protection_preview(relationships, statuses):
     if not relationships:
         return ""
@@ -3094,7 +3212,7 @@ def build_public_protection_summary_card(relationships, statuses):
         label = status.get("label", "UNKNOWN")
         css = status.get("css", "info")
 
-        if label == "CONFIGURED":
+        if label == "CONFIGURED" or css == "ok":
             configured_count += 1
         elif label == "INCOMPLETE" or css == "warning":
             incomplete_count += 1
@@ -4515,7 +4633,14 @@ config_backup_preview_html = build_config_backup_preview(
 )
 
 config_protection_relationships = normalize_config_protection_relationships(CONFIG_ENABLED_PROTECTION)
-config_protection_statuses = collect_config_protection_relationships(config_protection_relationships)
+config_protection_statuses = collect_config_protection_relationships(
+    config_protection_relationships
+)
+config_protection_statuses = apply_config_protection_replication_overlay(
+    config_protection_relationships,
+    config_protection_statuses,
+    config_truenas_replication_rows,
+)
 config_protection_preview_html = build_config_protection_preview(
     config_protection_relationships,
     config_protection_statuses,

@@ -311,8 +311,12 @@ backup_checks:
 # - enabled relationships are shown in the Config Preview section
 # - complete replication relationships show CONFIGURED
 # - missing source/target host information shows INCOMPLETE
-# - this preview documents protection intent only
-# - it does not replace the original reference replication checks yet
+# - a live TrueNAS replication task can overlay the relationship status when:
+#   - source_host matches the monitored TrueNAS host
+#   - every configured dataset is present in the task source datasets
+#   - the task target equals or sits below target_prefix
+# - unmatched relationships keep their configuration-preview status
+# - overlays do not affect Overall Status or replace the reference checks
 #
 # Keep enabled: false unless this replication relationship actually exists.
 

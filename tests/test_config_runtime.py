@@ -41,6 +41,8 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_protection_summary_card",
     "build_public_services_summary_card",
     "build_public_four_card_summary_preview",
+    "config_replication_row_matches_relationship",
+    "apply_config_protection_replication_overlay",
 }
 
 
@@ -129,6 +131,12 @@ build_public_services_summary_card = FUNCTIONS[
 ]
 build_public_four_card_summary_preview = FUNCTIONS[
     "build_public_four_card_summary_preview"
+]
+config_replication_row_matches_relationship = FUNCTIONS[
+    "config_replication_row_matches_relationship"
+]
+apply_config_protection_replication_overlay = FUNCTIONS[
+    "apply_config_protection_replication_overlay"
 ]
 
 
@@ -959,6 +967,267 @@ class StorageSummaryCardTests(unittest.TestCase):
             "7 Checks · 7 OK · 0 WARNING · 0 CRITICAL",
             card,
         )
+
+
+class ProtectionReplicationOverlayTests(unittest.TestCase):
+    def setUp(self):
+        self.relationship = {
+            "id": "t620-to-t330",
+            "name": "T620 to T330",
+            "type": "replication",
+            "source_host": "t620",
+            "target_host": "t330",
+            "target_prefix": "backup/t620/zfs-replication",
+            "datasets": [
+                "tank/stacks",
+                "tank/configs",
+            ],
+        }
+        self.statuses = {
+            "t620-to-t330": {
+                "label": "CONFIGURED",
+                "css": "info",
+                "raw": "replication preview",
+            }
+        }
+        self.row = {
+            "host_id": "t620",
+            "host_name": "T620 TrueNAS",
+            "task_id": "7",
+            "name": "T620 replication",
+            "task_enabled": True,
+            "direction": "PUSH",
+            "transport": "SSH",
+            "source_datasets": [
+                "tank/stacks",
+                "tank/configs",
+                "tank/media",
+            ],
+            "target_dataset": "backup/t620/zfs-replication",
+            "execution_state": "FINISHED",
+            "label": "OK",
+            "css": "ok",
+            "raw": "last execution finished",
+        }
+
+    def test_exact_and_child_targets_match(self):
+        exact_row = dict(self.row)
+
+        self.assertTrue(
+            config_replication_row_matches_relationship(
+                self.relationship,
+                exact_row,
+            )
+        )
+
+        child_row = dict(
+            self.row,
+            target_dataset=(
+                "backup/t620/zfs-replication/"
+                "tank/stacks"
+            ),
+        )
+
+        self.assertTrue(
+            config_replication_row_matches_relationship(
+                self.relationship,
+                child_row,
+            )
+        )
+
+    def test_dataset_and_path_trailing_slashes_are_normalized(self):
+        relationship = dict(
+            self.relationship,
+            target_prefix="backup/t620/zfs-replication/",
+            datasets=[
+                "tank/stacks/",
+                "tank/configs/",
+            ],
+        )
+        row = dict(
+            self.row,
+            source_datasets=[
+                "tank/stacks/",
+                "tank/configs",
+            ],
+            target_dataset=(
+                "backup/t620/zfs-replication/"
+                "tank"
+            ),
+        )
+
+        self.assertTrue(
+            config_replication_row_matches_relationship(
+                relationship,
+                row,
+            )
+        )
+
+    def test_non_confident_candidates_do_not_match(self):
+        candidates = (
+            (
+                "wrong host",
+                self.relationship,
+                dict(self.row, host_id="t330"),
+            ),
+            (
+                "no configured datasets",
+                dict(self.relationship, datasets=[]),
+                self.row,
+            ),
+            (
+                "missing configured dataset",
+                self.relationship,
+                dict(
+                    self.row,
+                    source_datasets=["tank/stacks"],
+                ),
+            ),
+            (
+                "wrong target prefix",
+                self.relationship,
+                dict(
+                    self.row,
+                    target_dataset="backup/other",
+                ),
+            ),
+            (
+                "collector failure row",
+                self.relationship,
+                dict(self.row, task_enabled=None),
+            ),
+            (
+                "non-replication relationship",
+                dict(self.relationship, type="backup"),
+                self.row,
+            ),
+        )
+
+        for name, relationship, row in candidates:
+            with self.subTest(name=name):
+                self.assertFalse(
+                    config_replication_row_matches_relationship(
+                        relationship,
+                        row,
+                    )
+                )
+
+    def test_matching_live_row_overlays_configured_status(self):
+        updated = apply_config_protection_replication_overlay(
+            [self.relationship],
+            self.statuses,
+            [self.row],
+        )
+
+        self.assertEqual(
+            updated["t620-to-t330"]["label"],
+            "OK",
+        )
+        self.assertEqual(
+            updated["t620-to-t330"]["css"],
+            "ok",
+        )
+        self.assertIn(
+            "1 matching task",
+            updated["t620-to-t330"]["raw"],
+        )
+        self.assertIn(
+            "T620 replication",
+            updated["t620-to-t330"]["raw"],
+        )
+        self.assertIn(
+            "last execution finished",
+            updated["t620-to-t330"]["raw"],
+        )
+
+        self.assertEqual(
+            self.statuses["t620-to-t330"]["label"],
+            "CONFIGURED",
+        )
+
+    def test_worst_matching_severity_wins(self):
+        warning_row = dict(
+            self.row,
+            task_id="8",
+            name="Paused replication",
+            label="PAUSED",
+            css="warning",
+            raw="replication task is paused",
+        )
+        failed_row = dict(
+            self.row,
+            task_id="9",
+            name="Failed replication",
+            label="CRITICAL",
+            css="bad",
+            raw="network failure",
+        )
+
+        updated = apply_config_protection_replication_overlay(
+            [self.relationship],
+            self.statuses,
+            [
+                self.row,
+                warning_row,
+                failed_row,
+            ],
+        )
+
+        status = updated["t620-to-t330"]
+
+        self.assertEqual(status["label"], "CRITICAL")
+        self.assertEqual(status["css"], "bad")
+        self.assertIn("3 matching tasks", status["raw"])
+        self.assertIn("Failed replication", status["raw"])
+        self.assertIn("network failure", status["raw"])
+
+    def test_unmatched_and_incomplete_statuses_are_preserved(self):
+        unmatched = apply_config_protection_replication_overlay(
+            [self.relationship],
+            self.statuses,
+            [dict(self.row, host_id="other")],
+        )
+
+        self.assertEqual(
+            unmatched["t620-to-t330"],
+            self.statuses["t620-to-t330"],
+        )
+
+        incomplete_statuses = {
+            "t620-to-t330": {
+                "label": "INCOMPLETE",
+                "css": "warning",
+                "raw": "missing target host",
+            }
+        }
+        incomplete = apply_config_protection_replication_overlay(
+            [self.relationship],
+            incomplete_statuses,
+            [self.row],
+        )
+
+        self.assertEqual(
+            incomplete["t620-to-t330"],
+            incomplete_statuses["t620-to-t330"],
+        )
+
+    def test_live_ok_still_counts_as_configured(self):
+        updated = apply_config_protection_replication_overlay(
+            [self.relationship],
+            self.statuses,
+            [self.row],
+        )
+        card = build_public_protection_summary_card(
+            [self.relationship],
+            updated,
+        )
+
+        self.assertIn(
+            "1 Relationships · 1 CONFIGURED · 0 INCOMPLETE",
+            card,
+        )
+        self.assertNotIn(" · 1 INFO", card)
+        self.assertIn(">OK</span>", card)
 
 
 class ProtectionSummaryCardTests(unittest.TestCase):
