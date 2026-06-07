@@ -226,6 +226,7 @@ Current Phase 2 public-preview behavior:
 - configured Docker services on the collector node can report live container status
 - configured TrueNAS app services can report live app status for enabled `type: truenas` hosts
 - enabled TrueNAS hosts with `modules.snapshots: true` can report live snapshot-task state and latest-snapshot freshness
+- enabled TrueNAS hosts with `modules.replications: true` can report live replication-task configuration and execution state
 - configured local storage checks can report collector-local filesystem usage using `df`
 - configured backup checks can report collector-local marker-file freshness and optional systemd timer state
 - configured protection relationships can render preview backup/replication relationships from `config.yaml`
@@ -260,6 +261,32 @@ For each matching host, Sanity Node:
 - respects TrueNAS `allow_empty: false` behavior when no dataset changes have occurred
 
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The current preview uses the configured Sanity Node SSH credentials. Snapshot preview results do not affect Overall Status yet, and the original hardcoded snapshot cards remain untouched.
+
+### TrueNAS replication checks
+
+Enable live replication monitoring per TrueNAS host:
+
+```yaml
+hosts:
+  - id: truenas-main
+    enabled: true
+    type: truenas
+    address: 192.168.1.20
+
+    modules:
+      replications: true
+```
+
+For each matching host, Sanity Node:
+
+- queries tasks with `midclt call replication.query`
+- reports enabled or disabled task state
+- shows direction, transport, source datasets, and target dataset
+- reports the current or latest execution state
+- shows the last execution time and last snapshot when available
+- reports when no replication tasks are configured
+
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
 
 ### `summary_cards`
 
