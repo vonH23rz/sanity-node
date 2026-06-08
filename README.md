@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **153 deterministic standard-library regression tests**
+- **176 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -54,11 +54,13 @@ The repository also includes the public runtime scaffold:
 - `docker-compose.yml`
 - `.env.example`
 - `requirements.txt`
+- `examples/config.starter.yaml`
+- `scripts/bootstrap-workspace.py`
 - `scripts/docker-entrypoint.sh`
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-The original hardcoded dashboard and the Phase 2F public preview remain intentionally isolated. Replacing the reference dashboard, publishing a polished installation flow, and adding new monitoring families belong to Phase 3.
+The original hardcoded dashboard and the Phase 2F public preview remain intentionally isolated. The safe first-run bootstrap is now available, while public/reference runtime isolation, migration parity, and additional monitoring families remain Phase 3 work.
 
 ---
 
@@ -160,7 +162,7 @@ The installation tutorial explains the public install direction, requirements, c
 
 [Installing Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity_Node)
 
-The repository now contains the Docker Compose and configuration-driven runtime scaffold. The installation tutorial still needs a final public first-run pass, so treat it as guidance rather than a polished release installer.
+The repository now contains a deterministic first-run bootstrap, a credential-free starter configuration, fail-closed startup checks, and a health-gated Docker Compose flow. Public/reference runtime isolation remains a later Phase 3 chapter.
 
 ---
 
@@ -174,13 +176,16 @@ sanity-node/
 │   └── assets/
 │       └── sanity-node-dashboard-readme.png
 ├── examples/
-│   └── config.example.yaml
+│   ├── config.example.yaml
+│   └── config.starter.yaml
 ├── scripts/
+│   ├── bootstrap-workspace.py
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
 │   ├── startup-preflight.py
 │   └── validate-config.py
 ├── tests/
+│   ├── test_bootstrap_workspace.py
 │   ├── test_config_runtime.py
 │   └── test_startup_preflight.py
 ├── systemd/
@@ -481,6 +486,54 @@ The validator checks:
 
 Validation errors return exit code `1`. Warnings describe runtime fallback behavior, such as ignored summary cards, but do not fail validation. The validator reads configuration only; it does not generate or overwrite a dashboard.
 
+### Safe first-run workspace bootstrap
+
+Run the bootstrap from the root of a cloned Sanity Node repository:
+
+```bash
+./scripts/bootstrap-workspace.py --create-env
+```
+
+The command creates:
+
+```text
+config/
+html/
+logs/
+ssh/
+config/config.yaml
+.env
+```
+
+The generated configuration comes from
+`examples/config.starter.yaml`. It contains one enabled collector host,
+requires no SSH credentials, enables no placeholder remote systems, and
+keeps all optional services, storage checks, backup checks, protection
+relationships, and image-update sources disabled.
+
+`examples/config.example.yaml` remains the full configuration reference.
+It is not the recommended file to copy unchanged for a first start because
+its enabled TrueNAS example requires working SSH credentials.
+
+Existing files are preserved by default. The optional `--force` flag
+replaces only `config/config.yaml` and, when `--create-env` is also
+supplied, `.env`. It does not delete SSH keys, generated dashboard files,
+logs, or unrelated user files.
+
+The `--root` option is intended for tests and advanced alternate-workspace
+preparation. Normal installations should omit it and run the command
+inside the cloned repository.
+
+After bootstrap:
+
+```bash
+./scripts/validate-config.py config/config.yaml
+docker compose up --build --wait && docker compose ps
+```
+
+The Compose command waits for both successful initial dashboard generation
+and the HTTP health check.
+
 ### Startup preflight
 
 Docker startup now fails closed before the web server is exposed. The container startup sequence is:
@@ -567,6 +620,8 @@ The configuration-driven runtime tests extract only selected pure functions from
 
 `tests/test_startup_preflight.py` separately covers missing and malformed configuration, runtime paths, conditional SSH credential requirements, startup ordering, failed initial generation, refresh-loop shutdown, and generated-dashboard health-check requirements.
 
+`tests/test_bootstrap_workspace.py` covers safe directory creation, collector-only starter validation, startup-preflight compatibility, current-user `.env` identity values, preservation by default, explicit managed-file replacement, directory collisions, symlink rejection, and protection of unrelated workspace files.
+
 The current runtime scaffold separates:
 
 ```text
@@ -582,51 +637,64 @@ logs/              = runtime logs
 
 ## Public install direction
 
-The current scaffolded public install flow is:
+The supported scaffolded first-run flow is:
+
+```bash
+git clone https://github.com/vonH23rz/sanity-node.git
+cd sanity-node
+
+./scripts/bootstrap-workspace.py --create-env
+./scripts/validate-config.py config/config.yaml
+docker compose up --build --wait && docker compose ps
+```
+
+Then open:
 
 ```text
-git clone
-create config, html, logs, and optional ssh directories
-copy examples/config.example.yaml to config/config.yaml
-optionally copy .env.example to .env
-edit dashboard, collector, and host settings
-add SSH keys only for enabled SSH-backed checks
-start Sanity Node with Docker Compose
-confirm the container reports healthy
-open http://collector-ip:8099
-enable optional features later
+http://<collector-ip>:8099
 ```
+
+The bootstrap creates a non-failing collector-only starter
+configuration. Remote systems, SSH keys, service checks, storage
+checks, backups, replications, and update sources are intentionally
+not enabled during the first start.
+
+After the container is healthy:
+
+1. edit `config/config.yaml`
+2. set the collector hostname and display name
+3. add one real host or one simple HTTP service
+4. add SSH credentials only when an enabled check requires them
+5. validate again before restarting Compose
+
+Use `examples/config.example.yaml` as the full configuration reference
+rather than copying it unchanged. Its enabled TrueNAS example is
+intentionally feature-rich and requires working SSH credentials.
+
+Existing bootstrap-managed files are preserved unless `--force` is
+supplied. Use that flag only when intentionally resetting
+`config/config.yaml` and, together with `--create-env`, `.env`.
 
 Sanity Node should start small and grow with the environment.
-
-A first useful setup can be as simple as:
-
-```text
-dashboard
-collector
-one host
-one or two basic modules
-```
-
-Optional features can be enabled later:
-
-```text
-services
-local storage
-backup checks
-snapshot checks
-replication checks
-image update monitoring
-```
 
 ---
 ## Phase 3 boundary
 
-Phase 2F is closed. The following work is intentionally deferred to Phase 3 and is not considered a Phase 2F loose end:
+Phase 2F is closed.
+
+Completed Phase 3A reliability work now includes:
+
+- fail-closed configuration validation and startup preflight
+- conditional SSH credential checks
+- stale-output protection and required initial dashboard generation
+- generated-dashboard and HTTP container health checks
+- a deterministic, non-destructive first-run workspace bootstrap
+- a credential-free collector-only starter configuration
+- a health-gated Docker Compose first-run flow
+
+The following work remains within the Phase 3 boundary:
 
 - make the configuration-driven runtime the primary public dashboard path
-- complete and validate a clean end-user installation and first-run guide
-- add safer first-run, credential, and environment checks
 - refine the four global summary cards for the public layout
 - improve separation between the personal reference deployment and public template
 - add optional remote Linux check families beyond Docker, storage, and backup status

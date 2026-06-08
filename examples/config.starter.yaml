@@ -1,0 +1,56 @@
+# =============================================================================
+# Sanity Node safe first-run configuration
+# =============================================================================
+#
+# This configuration is deliberately local and credential-free:
+#
+# - one enabled collector host
+# - no placeholder remote systems
+# - no SSH-backed monitoring
+# - no enabled services, storage checks, backups, or update sources
+#
+# It is intended to produce a valid first dashboard before optional monitoring
+# is enabled. Add remote hosts and credentials only after the initial deployment
+# is healthy.
+# =============================================================================
+
+dashboard:
+  title: Sanity Node
+  subtitle: Observe. Announce. Stay sane.
+  refresh_minutes: 5
+  port: 8099
+
+collector:
+  id: collector
+  display_name: Utility Node
+  hostname: collector
+  type: linux
+
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Utility Node
+    hostname: collector
+    type: linux
+
+    modules:
+      system_info: true
+      local_storage: false
+      docker: false
+      backup_status: false
+      services: false
+
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+
+image_updates:
+  enabled: false
+  sources: []
+
+summary_cards:
+  - systems
+  - storage
+  - protection
+  - services
