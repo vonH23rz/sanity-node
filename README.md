@@ -178,9 +178,11 @@ sanity-node/
 ├── scripts/
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
+│   ├── startup-preflight.py
 │   └── validate-config.py
 ├── tests/
-│   └── test_config_runtime.py
+│   ├── test_config_runtime.py
+│   └── test_startup_preflight.py
 ├── systemd/
 │   ├── sanity-node-generate.service
 │   ├── sanity-node-generate.timer
@@ -479,6 +481,34 @@ The validator checks:
 
 Validation errors return exit code `1`. Warnings describe runtime fallback behavior, such as ignored summary cards, but do not fail validation. The validator reads configuration only; it does not generate or overwrite a dashboard.
 
+### Startup preflight
+
+Docker startup now fails closed before the web server is exposed. The container startup sequence is:
+
+1. validate `config.yaml`
+2. check runtime paths and required SSH credentials
+3. remove any stale generated `index.html`
+4. require one successful, nonempty dashboard render
+5. start the refresh loop and web server
+
+The startup preflight checks:
+
+- that the configuration file exists, is readable, and contains a YAML mapping
+- that the dashboard-output and generator-log directories exist and are writable
+- that SSH users and key files exist for enabled checks that actually require SSH
+- that disabled modules and collector-local checks do not incorrectly require SSH credentials
+
+Run it manually with:
+
+```bash
+./scripts/startup-preflight.py \
+  --config config/config.yaml \
+  --output html/index.html \
+  --log logs/generator.log
+```
+
+The container health check requires both a nonempty generated dashboard and a working HTTP response. A running web server alone is no longer considered healthy.
+
 ### Safe local preview render
 
 Contributors can safely render the public runtime preview with:
@@ -533,7 +563,9 @@ The current tests protect:
 - protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
 - protection-to-snapshot matching, exact and recursive dataset coverage, exclusion handling, complete-coverage requirements, metadata retention, and snapshot/replication worst-severity precedence
 
-The tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
+The configuration-driven runtime tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
+
+`tests/test_startup_preflight.py` separately covers missing and malformed configuration, runtime paths, conditional SSH credential requirements, startup ordering, failed initial generation, refresh-loop shutdown, and generated-dashboard health-check requirements.
 
 The current runtime scaffold separates:
 
@@ -554,10 +586,13 @@ The current scaffolded public install flow is:
 
 ```text
 git clone
-copy config.example.yaml to config.yaml
+create config, html, logs, and optional ssh directories
+copy examples/config.example.yaml to config/config.yaml
+optionally copy .env.example to .env
 edit dashboard, collector, and host settings
-add SSH keys if TrueNAS monitoring or remote Linux Docker, local-storage, or backup-status checks are enabled
+add SSH keys only for enabled SSH-backed checks
 start Sanity Node with Docker Compose
+confirm the container reports healthy
 open http://collector-ip:8099
 enable optional features later
 ```
