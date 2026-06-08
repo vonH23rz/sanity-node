@@ -64,6 +64,7 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_protection_summary_card",
     "build_public_services_summary_card",
     "build_public_four_card_summary_preview",
+    "promote_public_runtime_detail_html",
     "config_replication_row_matches_relationship",
     "apply_config_protection_replication_overlay",
     "config_snapshot_row_covers_dataset",
@@ -219,6 +220,9 @@ build_public_services_summary_card = FUNCTIONS[
 ]
 build_public_four_card_summary_preview = FUNCTIONS[
     "build_public_four_card_summary_preview"
+]
+promote_public_runtime_detail_html = FUNCTIONS[
+    "promote_public_runtime_detail_html"
 ]
 config_replication_row_matches_relationship = FUNCTIONS[
     "config_replication_row_matches_relationship"
@@ -4700,7 +4704,7 @@ class FourCardSummaryPreviewTests(unittest.TestCase):
             }
         }
 
-    def render(self, summary_cards):
+    def render(self, summary_cards, promoted=False):
         return build_public_four_card_summary_preview(
             self.hosts,
             self.web_statuses,
@@ -4711,6 +4715,7 @@ class FourCardSummaryPreviewTests(unittest.TestCase):
             self.services,
             self.service_statuses,
             summary_cards,
+            promoted=promoted,
         )
 
     def test_selected_cards_follow_normalized_order(self):
@@ -4752,6 +4757,86 @@ class FourCardSummaryPreviewTests(unittest.TestCase):
         self.assertIn('<div class="title">Storage</div>', preview)
         self.assertIn('<div class="title">Protection</div>', preview)
         self.assertIn('<div class="title">Services</div>', preview)
+
+
+    def test_promoted_summary_uses_runtime_presentation(self):
+        summary = self.render(
+            [
+                "systems",
+                "storage",
+                "protection",
+                "services",
+            ],
+            promoted=True,
+        )
+
+        self.assertIn("Dashboard Summary", summary)
+        self.assertIn("System Overview", summary)
+        self.assertIn(
+            "Active cards: Systems · Storage · Protection · Services",
+            summary,
+        )
+        self.assertNotIn("Public Four-Card Preview", summary)
+        self.assertNotIn(
+            "Preview only · existing summary cards unchanged",
+            summary,
+        )
+
+
+class PublicRuntimeDetailPromotionTests(unittest.TestCase):
+    def test_promotes_all_obsolete_public_detail_wording(self):
+        legacy_html = "\n".join(
+            (
+                '<div class="configured-hosts-kicker">Config Preview</div>',
+                "Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.",
+                "These preview results do not affect Overall Status yet.",
+                (
+                    "Protection relationships are config-driven preview data. "
+                    "They document backup or replication intent without changing "
+                    "the existing reference replication checks yet."
+                ),
+                "unknown protection relationships are preview-only for now",
+                "replication preview · tank/media · target prefix: backup",
+                "docker checks are not active in the public preview yet",
+            )
+        )
+
+        promoted_html = promote_public_runtime_detail_html(
+            legacy_html
+        )
+
+        for obsolete_text in (
+            "Config Preview",
+            "preview-only",
+            "preview results",
+            "preview data",
+            "replication preview",
+            "public preview",
+        ):
+            self.assertNotIn(
+                obsolete_text,
+                promoted_html,
+            )
+
+        for promoted_text in (
+            "Runtime Detail",
+            "Configured hosts and Web UI checks.",
+            "These results do not affect Overall Status.",
+            "include available live status overlays",
+            "not actively checked yet",
+            "replication intent ·",
+            "public runtime yet",
+        ):
+            self.assertIn(
+                promoted_text,
+                promoted_html,
+            )
+
+    def test_empty_detail_html_remains_empty(self):
+        self.assertEqual(
+            promote_public_runtime_detail_html(""),
+            "",
+        )
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):

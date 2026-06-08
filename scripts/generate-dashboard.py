@@ -4079,6 +4079,7 @@ def build_public_four_card_summary_preview(
     services,
     service_statuses,
     summary_cards,
+    promoted=False,
 ):
     builders = {
         "systems": lambda: build_public_systems_summary_card(
@@ -4097,6 +4098,22 @@ def build_public_four_card_summary_preview(
     cards_html = "\n".join(builders[card]() for card in requested)
     active_cards = " · ".join(card.title() for card in requested)
 
+    if promoted:
+        return f"""
+<div class="public-summary-preview">
+  <div class="public-summary-preview-header">
+    <div>
+      <div class="public-summary-kicker">Dashboard Summary</div>
+      <h2>System Overview</h2>
+      <div class="public-summary-selected">Active cards: {h(active_cards)}</div>
+    </div>
+  </div>
+  <div class="public-summary-row">
+    {cards_html}
+  </div>
+</div>
+"""
+
     return f"""
 <div class="public-summary-preview">
   <div class="public-summary-preview-header">
@@ -4114,6 +4131,45 @@ def build_public_four_card_summary_preview(
 """
 
 
+def promote_public_runtime_detail_html(value):
+    replacements = (
+        (
+            '<div class="configured-hosts-kicker">Config Preview</div>',
+            '<div class="configured-hosts-kicker">Runtime Detail</div>',
+        ),
+        (
+            "Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.",
+            "Configured hosts and Web UI checks. Web UI checks do not affect Overall Status.",
+        ),
+        (
+            "These preview results do not affect Overall Status yet.",
+            "These results do not affect Overall Status.",
+        ),
+        (
+            "Protection relationships are config-driven preview data. "
+            "They document backup or replication intent without changing "
+            "the existing reference replication checks yet.",
+            "Protection relationships document backup or replication intent "
+            "and include available live status overlays.",
+        ),
+        (
+            " protection relationships are preview-only for now",
+            " protection relationships are not actively checked yet",
+        ),
+        (
+            "replication preview ·",
+            "replication intent ·",
+        ),
+        (
+            "checks are not active in the public preview yet",
+            "checks are not active in the public runtime yet",
+        ),
+    )
+
+    for old, new in replacements:
+        value = value.replace(old, new)
+
+    return value
 
 
 def h(value):
@@ -5707,13 +5763,16 @@ if config_service_update_overlay_count:
         f"{config_service_update_overlay_count}"
     )
 
-public_summary_preview_html = build_public_host_summary_preview(
-    CONFIG_HOSTS,
-    public_summary_services,
-    public_summary_statuses,
-    configured_host_web_statuses,
-    CONFIG_SUMMARY_CARDS,
-)
+if DASHBOARD_RUNTIME_MODE == "public":
+    public_summary_preview_html = ""
+else:
+    public_summary_preview_html = build_public_host_summary_preview(
+        CONFIG_HOSTS,
+        public_summary_services,
+        public_summary_statuses,
+        configured_host_web_statuses,
+        CONFIG_SUMMARY_CARDS,
+    )
 
 public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     CONFIG_HOSTS,
@@ -5725,7 +5784,42 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     public_summary_services,
     public_summary_statuses,
     CONFIG_SUMMARY_CARDS,
+    promoted=DASHBOARD_RUNTIME_MODE == "public",
 )
+
+if DASHBOARD_RUNTIME_MODE == "public":
+    configured_hosts_preview_html = promote_public_runtime_detail_html(
+        configured_hosts_preview_html
+    )
+    config_truenas_snapshot_preview_html = (
+        promote_public_runtime_detail_html(
+            config_truenas_snapshot_preview_html
+        )
+    )
+    config_truenas_replication_preview_html = (
+        promote_public_runtime_detail_html(
+            config_truenas_replication_preview_html
+        )
+    )
+    config_image_update_preview_html = promote_public_runtime_detail_html(
+        config_image_update_preview_html
+    )
+    config_protection_preview_html = promote_public_runtime_detail_html(
+        config_protection_preview_html
+    )
+    config_local_storage_preview_html = promote_public_runtime_detail_html(
+        config_local_storage_preview_html
+    )
+    config_backup_preview_html = promote_public_runtime_detail_html(
+        config_backup_preview_html
+    )
+    details_section_heading = "Details"
+    systems_layout_container_html = ""
+else:
+    details_section_heading = "1. Systems"
+    systems_layout_container_html = f"""  <div class="systems-list">
+    {systems_layout_html}
+  </div>"""
 
 page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -6619,10 +6713,8 @@ pre, .mono {{
 {public_summary_preview_html}
 
 <section>
-  <h2>1. Systems</h2>
-  <div class="systems-list">
-    {systems_layout_html}
-  </div>
+  <h2>{h(details_section_heading)}</h2>
+{systems_layout_container_html}
   {configured_hosts_preview_html}
 
   {config_truenas_snapshot_preview_html}

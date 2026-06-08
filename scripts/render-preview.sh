@@ -35,8 +35,8 @@ if [[ ! -s "${OUTPUT_FILE}" ]]; then
   exit 1
 fi
 
-if ! grep -Fq "Public Four-Card Preview" "${OUTPUT_FILE}"; then
-  echo "ERROR: Public four-card preview marker was not found." >&2
+if ! grep -Fq "Dashboard Summary" "${OUTPUT_FILE}"; then
+  echo "ERROR: Dashboard Summary marker was not found." >&2
   exit 1
 fi
 

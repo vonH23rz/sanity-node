@@ -284,9 +284,43 @@ exit 97
         self.assertEqual(commands, "")
 
         self.assertIn(
-            "Public Four-Card Preview",
+            "Dashboard Summary",
             rendered,
         )
+        self.assertIn(
+            "System Overview",
+            rendered,
+        )
+        self.assertIn(
+            "Active cards: Systems · Storage · Protection · Services",
+            rendered,
+        )
+        self.assertIn(
+            "<h2>Details</h2>",
+            rendered,
+        )
+        self.assertIn(
+            "Runtime Detail",
+            rendered,
+        )
+        self.assertNotIn(
+            '<div class="systems-list">',
+            rendered,
+        )
+
+        for obsolete_label in (
+            "Public Four-Card Preview",
+            "Public Layout Preview",
+            "Host-based summary direction",
+            "Config Preview",
+            "Preview only · existing summary cards unchanged",
+            "<h2>1. Systems</h2>",
+        ):
+            self.assertNotIn(
+                obsolete_label,
+                rendered,
+            )
+
         self.assertIn(
             "Overall Status: OK",
             rendered,
@@ -306,6 +340,39 @@ exit 97
                 personal_value,
                 rendered,
             )
+
+    def test_reference_mode_preserves_legacy_presentation(self):
+        result, rendered, commands = self.render_starter(
+            "reference"
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 0, output)
+        self.assertTrue(rendered, output)
+        self.assertTrue(commands.strip())
+
+        for expected_label in (
+            "Public Four-Card Preview",
+            "Public Layout Preview",
+            "Host-based summary direction",
+            "Config Preview",
+            "Preview only · existing summary cards unchanged",
+            "<h2>1. Systems</h2>",
+            '<div class="systems-list">',
+        ):
+            self.assertIn(
+                expected_label,
+                rendered,
+            )
+
+        self.assertNotIn(
+            "Dashboard Summary",
+            rendered,
+        )
+        self.assertNotIn(
+            "<h2>Details</h2>",
+            rendered,
+        )
 
     def test_missing_mode_preserves_reference_runtime_default(self):
         result, rendered, commands = self.render_starter(

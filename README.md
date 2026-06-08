@@ -243,10 +243,10 @@ The goal is that users should be able to describe their own homelab without edit
 
 Completed Phase 2F configuration-driven behavior:
 
-- configured hosts can appear as host-based summary cards
-- host Web UI links can show preview reachability badges
-- a confirmed TrueNAS SSH/network timeout collapses that host card to `Host unreachable` instead of listing every configured service
-- confirmed TrueNAS host unreachability also overrides the host's Web UI result in the four-card Systems summary
+- configured hosts appear in the Systems summary card and the Configured Hosts detail table
+- host Web UI links can show reachability badges
+- a confirmed TrueNAS SSH/network timeout marks the configured host as `Host unreachable` instead of listing every affected service separately
+- confirmed TrueNAS host unreachability also overrides the host's Web UI result in the Systems summary card
 - Web UI-only, authentication, host-key, and parsing failures retain the normal per-service detail and Systems status
 - configured HTTP services can report live `UP` / `DOWN`
 - configured Docker services on the collector node can report live local container status
@@ -264,16 +264,16 @@ Completed Phase 2F configuration-driven behavior:
 - replication relationships can also inherit live snapshot status when every configured dataset is confidently covered by an exact snapshot task or an explicitly recursive ancestor task
 - recursive snapshot coverage respects TrueNAS exclusion paths; missing, malformed, partial, or ambiguous coverage leaves the relationship unchanged
 - snapshot and replication overlays combine using worst-severity precedence, while a live `OK` relationship still counts as configured
-- unmatched or incomplete relationships retain their configuration-preview status instead of being treated as failures
-- configured `summary_cards` can render the first four-card public preview: Systems, Storage, Protection, and Services
+- unmatched or incomplete relationships retain their configured status instead of being treated as failures
+- configured `summary_cards` select and order the public dashboard summary cards: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
-- when the four-card Services summary is active, host-based cards retain their service counts but show only non-`UP` service exceptions; fully healthy hosts show one `ALL UP` line
-- when the Services summary is disabled, host-based cards retain the full per-service detail list
+- public mode renders only the selected summary cards and suppresses the older host-based preview row
+- reference mode retains the older host-based preview row unchanged for compatibility
 - remote Docker services remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote local storage checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
-- live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status
+- live snapshot and replication overlays affect only the configured Protection detail and summary card; they do not affect Overall Status
 - `dashboard.runtime_mode: public` suppresses the hardcoded five-card reference summary, personal systems layout, and personal collectors
 - `dashboard.runtime_mode: reference` preserves the original reference checks, summary cards, and systems layout
 
@@ -387,7 +387,7 @@ For each matching host, Sanity Node:
 
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
 
-Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configuration-preview status.
+Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configured status.
 
 When both snapshot and replication overlays match the same relationship, Sanity Node keeps the worst live severity. A snapshot warning can therefore override healthy replication, while an existing replication failure is not hidden by healthy snapshots.
 
@@ -456,7 +456,7 @@ Both example configurations explicitly select `public`.
 
 ### `summary_cards`
 
-The public four-card preview is controlled by the optional `summary_cards` list in `config.yaml`.
+The public dashboard summary is controlled by the optional `summary_cards` list in `config.yaml`. In public mode it is rendered as the primary System Overview, while the older host-based preview row is suppressed. Reference mode retains the legacy preview presentation unchanged.
 
 Supported card names are:
 
@@ -604,10 +604,10 @@ The helper:
 - writes the generated dashboard to `/tmp/sanity-node-preview.html`
 - removes any previous temporary preview before rendering
 - verifies that the output exists and is not empty
-- checks for the public four-card preview and active-card markers
+- checks for the promoted Dashboard Summary and active-card markers
 - never writes to `/opt/homelab-dashboard/html/index.html`
 
-This provides a repeatable way to test public-preview changes without overwriting the live reference dashboard.
+This provides a repeatable way to test public dashboard changes without overwriting the live reference dashboard.
 
 ### Configuration-driven runtime regression tests
 

@@ -335,7 +335,7 @@ backup_checks:
 # Protection relationships only exist when configured here.
 #
 # Current public-preview behavior:
-# - enabled relationships are shown in the Config Preview section
+# - enabled relationships are shown in the Configured Protection Relationships detail section
 # - complete replication relationships begin as CONFIGURED
 # - missing source/target host information shows INCOMPLETE
 # - a live TrueNAS replication task can overlay the relationship status when:
@@ -349,7 +349,7 @@ backup_checks:
 #   - TrueNAS exclude paths block the excluded dataset and its descendants
 #   - missing, malformed, partial, or ambiguous coverage does not propagate
 # - when snapshot and replication overlays both match, worst severity wins
-# - unmatched relationships keep their configuration-preview status
+# - unmatched relationships keep their configured status
 # - overlays do not affect Overall Status or replace the reference checks
 #
 # Keep enabled: false unless this replication relationship actually exists.
