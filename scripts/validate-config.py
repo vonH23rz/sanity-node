@@ -23,6 +23,7 @@ SUPPORTED_SERVICE_TYPES = {"app", "helper"}
 SUPPORTED_SERVICE_CHECKS = {"http", "docker", "truenas_app"}
 SUPPORTED_IMAGE_UPDATE_PROVIDERS = {"diun", "truenas"}
 SUPPORTED_SUMMARY_CARDS = {"systems", "storage", "protection", "services"}
+SUPPORTED_RUNTIME_MODES = {"reference", "public"}
 SUPPORTED_TOP_LEVEL_KEYS = {
     "dashboard",
     "collector",
@@ -169,6 +170,21 @@ def validate_config(config: dict) -> Validator:
                 dashboard.get("subtitle"),
                 "dashboard.subtitle",
             )
+
+        if "runtime_mode" in dashboard:
+            runtime_mode = validator.validate_non_empty_string(
+                dashboard.get("runtime_mode"),
+                "dashboard.runtime_mode",
+            )
+
+            if (
+                runtime_mode is not None
+                and runtime_mode.lower() not in SUPPORTED_RUNTIME_MODES
+            ):
+                validator.error(
+                    "dashboard.runtime_mode",
+                    "must be one of: public, reference",
+                )
 
         validator.validate_integer(
             dashboard.get("refresh_minutes"),
