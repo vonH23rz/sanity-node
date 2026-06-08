@@ -22,12 +22,12 @@ Because in a homelab, everything works perfectly until it does not.
 
 ## Current project status
 
-Sanity Node now contains two deliberately separate runtime paths:
+Sanity Node now contains two deliberately selectable runtime paths:
 
 - the original homelab-tested reference dashboard
-- the completed Phase 2F configuration-driven runtime preview
+- the completed Phase 2F configuration-driven public runtime
 
-The reference dashboard remains available because it is the known-good production view for the original homelab. Phase 2F did not overwrite or silently replace it.
+The `dashboard.runtime_mode` setting selects which path executes. `public` runs only configuration-driven collectors and output. `reference` preserves the original personal dashboard behavior. A missing setting defaults to `reference` for backward compatibility.
 
 **Phase 2F is complete.**
 
@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **176 deterministic standard-library regression tests**
+- **187 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-The original hardcoded dashboard and the Phase 2F public preview remain intentionally isolated. The safe first-run bootstrap is now available, while public/reference runtime isolation, migration parity, and additional monitoring families remain Phase 3 work.
+Phase 3B.1 now isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Migration parity and additional monitoring families remain Phase 3 work.
 
 ---
 
@@ -162,7 +162,7 @@ The installation tutorial explains the public install direction, requirements, c
 
 [Installing Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity_Node)
 
-The repository now contains a deterministic first-run bootstrap, a credential-free starter configuration, fail-closed startup checks, and a health-gated Docker Compose flow. Public/reference runtime isolation remains a later Phase 3 chapter.
+The repository now contains a deterministic first-run bootstrap, a credential-free starter configuration, fail-closed startup checks, a health-gated Docker Compose flow, and explicit public/reference runtime isolation.
 
 ---
 
@@ -187,6 +187,7 @@ sanity-node/
 ├── tests/
 │   ├── test_bootstrap_workspace.py
 │   ├── test_config_runtime.py
+│   ├── test_runtime_mode.py
 │   └── test_startup_preflight.py
 ├── systemd/
 │   ├── sanity-node-generate.service
@@ -219,7 +220,7 @@ scripts/generate-dashboard.py
 
 This includes personal hostnames, IP addresses, services, pool relationships, local paths, and backup targets.
 
-That remains intentional for the original reference path. The Phase 2F public runtime reads its monitoring definitions from `config.yaml`; replacing the reference path is a separate Phase 3 migration rather than unfinished Phase 2F work.
+That remains intentional for `dashboard.runtime_mode: reference`. The public runtime reads its monitoring definitions from `config.yaml` and skips the hardcoded reference collectors and layout. Reaching complete migration parity before retiring the reference path remains a separate Phase 3 decision.
 
 ---
 
@@ -272,8 +273,9 @@ Completed Phase 2F configuration-driven behavior:
 - remote local storage checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
-- live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status or replace the original reference checks
-- the original hardcoded five-card reference summary remains untouched; replacing it is outside the completed Phase 2F scope
+- live snapshot and replication overlays affect only the config-driven Protection preview and card; they do not affect Overall Status
+- `dashboard.runtime_mode: public` suppresses the hardcoded five-card reference summary, personal systems layout, and personal collectors
+- `dashboard.runtime_mode: reference` preserves the original reference checks, summary cards, and systems layout
 
 ### Remote Linux Docker checks
 
@@ -427,6 +429,31 @@ Image-update results can overlay healthy configuration-driven services:
 
 Update overlays remain informational. They do not affect Overall Status, and they do not modify the original hardcoded service cards.
 
+### `dashboard.runtime_mode`
+
+Select the runtime under the `dashboard` mapping:
+
+```yaml
+dashboard:
+  runtime_mode: public
+```
+
+Supported values:
+
+- `public` — execute only configuration-driven collectors and render only configuration-driven output
+- `reference` — preserve the original personal T620/T330 and Utility Node runtime
+
+When the field is missing, Sanity Node defaults to `reference` so existing deployments retain their current behavior.
+
+In `public` mode:
+
+- hardcoded personal host, pool, snapshot, replication, and service collectors are skipped
+- hardcoded reference summary cards and system rows are not rendered
+- Overall Status and collector errors originate only from configuration-driven runtime checks
+- personal reference hostnames, addresses, and service names are not emitted into the dashboard
+
+Both example configurations explicitly select `public`.
+
 ### `summary_cards`
 
 The public four-card preview is controlled by the optional `summary_cards` list in `config.yaml`.
@@ -475,6 +502,7 @@ The validator checks:
 
 - YAML syntax and top-level structure
 - required dashboard and collector settings
+- supported `dashboard.runtime_mode` values
 - host IDs, host types, and duplicate hosts
 - enabled references to known hosts
 - service types, check types, URLs, containers, and TrueNAS app IDs
@@ -506,10 +534,10 @@ config/config.yaml
 ```
 
 The generated configuration comes from
-`examples/config.starter.yaml`. It contains one enabled collector host,
-requires no SSH credentials, enables no placeholder remote systems, and
-keeps all optional services, storage checks, backup checks, protection
-relationships, and image-update sources disabled.
+`examples/config.starter.yaml`. It selects `dashboard.runtime_mode: public`,
+contains one enabled collector host, requires no SSH credentials, enables no
+placeholder remote systems, and keeps all optional services, storage checks,
+backup checks, protection relationships, and image-update sources disabled.
 
 `examples/config.example.yaml` remains the full configuration reference.
 It is not the recommended file to copy unchanged for a first start because
@@ -613,10 +641,13 @@ The current tests protect:
 - TrueNAS snapshot and replication host eligibility, explicit module gating, ID requirements, display-name fallbacks, and address preservation
 - date parsing and formatting, snapshot inventory SSH/error handling, inventory row parsing, latest-snapshot selection, and replication metadata helpers
 - assembled four-card summary selection, normalized ordering, duplicate removal, unknown-card filtering, and default fallback
+- runtime-mode normalization, validation, backward-compatible reference defaults, whole-generator isolation, personal-output suppression, and reference-render preservation
 - protection-to-replication matching, path normalization, conservative no-match behavior, live severity overlays, and configured-count preservation
 - protection-to-snapshot matching, exact and recursive dataset coverage, exclusion handling, complete-coverage requirements, metadata retention, and snapshot/replication worst-severity precedence
 
-The configuration-driven runtime tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during unit tests.
+Most configuration-driven runtime tests extract only selected pure functions from `scripts/generate-dashboard.py` through Python's AST support. This avoids executing live collectors or writing dashboard output during those unit tests.
+
+`tests/test_runtime_mode.py` also executes the complete generator inside isolated temporary workspaces. Fake `ssh`, `curl`, and `docker` commands verify that public mode performs no personal reference collection, while reference mode still follows the original collector path and renders the original summary cards.
 
 `tests/test_startup_preflight.py` separately covers missing and malformed configuration, runtime paths, conditional SSH credential requirements, startup ordering, failed initial generation, refresh-loop shutdown, and generated-dashboard health-check requirements.
 
@@ -692,11 +723,18 @@ Completed Phase 3A reliability work now includes:
 - a credential-free collector-only starter configuration
 - a health-gated Docker Compose first-run flow
 
+Completed Phase 3B.1 runtime-isolation work now includes:
+
+- explicit `public` and `reference` runtime modes
+- backward-compatible `reference` behavior when the setting is absent
+- public-mode suppression of hardcoded personal collectors and output
+- public Overall Status and collector errors sourced only from configured checks
+- deterministic whole-generator isolation tests
+- preservation of the original reference dashboard path
+
 The following work remains within the Phase 3 boundary:
 
-- make the configuration-driven runtime the primary public dashboard path
 - refine the four global summary cards for the public layout
-- improve separation between the personal reference deployment and public template
 - add optional remote Linux check families beyond Docker, storage, and backup status
 - add backup-status providers beyond marker files
 - add protection relationship types beyond replication

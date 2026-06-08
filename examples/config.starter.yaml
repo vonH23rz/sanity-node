@@ -17,6 +17,7 @@
 dashboard:
   title: Sanity Node
   subtitle: Observe. Announce. Stay sane.
+  runtime_mode: public
   refresh_minutes: 5
   port: 8099
 

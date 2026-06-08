@@ -69,6 +69,21 @@ def cfg_list(path, default=None):
     return []
 
 
+SUPPORTED_RUNTIME_MODES = {"reference", "public"}
+
+
+def normalize_runtime_mode(value):
+    if not isinstance(value, str):
+        return "reference"
+
+    mode = value.strip().lower()
+
+    if mode in SUPPORTED_RUNTIME_MODES:
+        return mode
+
+    return "reference"
+
+
 def enabled_items(items):
     return [
         item for item in items
@@ -108,11 +123,16 @@ print(
 )
 
 
+DASHBOARD_RUNTIME_MODE = normalize_runtime_mode(
+    cfg_get(("dashboard", "runtime_mode"), "reference")
+)
 DASHBOARD_TITLE = str(cfg_get(("dashboard", "title"), "Sanity Node"))
 DASHBOARD_SUBTITLE = str(cfg_get(("dashboard", "subtitle"), "Observe. Announce. Stay sane."))
 REFRESH_MINUTES = cfg_int(("dashboard", "refresh_minutes"), 5)
 COLLECTOR_DISPLAY_NAME = str(cfg_get(("collector", "display_name"), "Utility Node"))
 STALE_AFTER_SECONDS = max(REFRESH_MINUTES, 1) * 3 * 60
+
+print(f"Dashboard runtime mode: {DASHBOARD_RUNTIME_MODE}")
 
 SSH_USER = os.environ.get("SANITY_NODE_SSH_USER", "truenas_admin")
 SSH_KEY = os.environ.get("SANITY_NODE_SSH_KEY", "/home/controls/.ssh/id_ed25519")
@@ -4844,70 +4864,86 @@ warning_issues = []
 info_issues = []
 collection_errors = []
 
-snapshot_tasks, snapshot_task_error = remote_json(T620_IP, "midclt call pool.snapshottask.query")
-t330_snapshot_tasks, t330_snapshot_task_error = remote_json(T330_IP, "midclt call pool.snapshottask.query")
-replications, replication_error = remote_json(T620_IP, "midclt call replication.query")
+reference_runtime_enabled = (
+    DASHBOARD_RUNTIME_MODE == "reference"
+)
+systems_layout_html = ""
+reference_summary_html = ""
 
-if snapshot_tasks is None:
-    snapshot_tasks = []
-    collection_errors.append(("T620 snapshot task query", snapshot_task_error))
+print(
+    "Reference runtime collectors: "
+    + (
+        "enabled"
+        if reference_runtime_enabled
+        else "skipped"
+    )
+)
 
-if t330_snapshot_tasks is None:
-    t330_snapshot_tasks = []
-    collection_errors.append(("T330 snapshot task query", t330_snapshot_task_error))
+if reference_runtime_enabled:
+    snapshot_tasks, snapshot_task_error = remote_json(T620_IP, "midclt call pool.snapshottask.query")
+    t330_snapshot_tasks, t330_snapshot_task_error = remote_json(T330_IP, "midclt call pool.snapshottask.query")
+    replications, replication_error = remote_json(T620_IP, "midclt call replication.query")
 
-if replications is None:
-    replications = []
-    collection_errors.append(("Replication query", replication_error))
+    if snapshot_tasks is None:
+        snapshot_tasks = []
+        collection_errors.append(("T620 snapshot task query", snapshot_task_error))
 
-task_by_dataset = {task.get("dataset"): task for task in snapshot_tasks}
+    if t330_snapshot_tasks is None:
+        t330_snapshot_tasks = []
+        collection_errors.append(("T330 snapshot task query", t330_snapshot_task_error))
 
-t620_snapshots, t620_snapshot_error = collect_snapshots(T620_IP)
-t330_snapshots, t330_snapshot_error = collect_snapshots(T330_IP)
+    if replications is None:
+        replications = []
+        collection_errors.append(("Replication query", replication_error))
 
-if t620_snapshot_error:
-    collection_errors.append(("T620 snapshot collection", t620_snapshot_error))
-if t330_snapshot_error:
-    collection_errors.append(("T330 snapshot collection", t330_snapshot_error))
+    task_by_dataset = {task.get("dataset"): task for task in snapshot_tasks}
 
-host_rows = ""
-host_statuses = {}
+    t620_snapshots, t620_snapshot_error = collect_snapshots(T620_IP)
+    t330_snapshots, t330_snapshot_error = collect_snapshots(T330_IP)
 
-for host_name, host_info in HOST_STATUS_HOSTS.items():
-    ip = host_info["ip"]
-    url = host_info["url"]
-    check = host_info.get("check", "ssh")
+    if t620_snapshot_error:
+        collection_errors.append(("T620 snapshot collection", t620_snapshot_error))
+    if t330_snapshot_error:
+        collection_errors.append(("T330 snapshot collection", t330_snapshot_error))
 
-    if check == "http":
-        try:
-            result = subprocess.run(
-                ["curl", "-k", "-fsS", "-I", "--connect-timeout", "5", url],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            ok = result.returncode == 0
-            output = (result.stdout + result.stderr).strip()
-        except Exception as e:
-            ok = False
-            output = str(e)
+    host_rows = ""
+    host_statuses = {}
 
-        css = "ok" if ok else "bad"
+    for host_name, host_info in HOST_STATUS_HOSTS.items():
+        ip = host_info["ip"]
+        url = host_info["url"]
+        check = host_info.get("check", "ssh")
 
-        if not ok:
-            nok_issues.append(f"{host_name} Web UI unreachable")
-            status = {
-                "uptime": output,
-                "load": "-",
-            }
+        if check == "http":
+            try:
+                result = subprocess.run(
+                    ["curl", "-k", "-fsS", "-I", "--connect-timeout", "5", url],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                ok = result.returncode == 0
+                output = (result.stdout + result.stderr).strip()
+            except Exception as e:
+                ok = False
+                output = str(e)
+
+            css = "ok" if ok else "bad"
+
+            if not ok:
+                nok_issues.append(f"{host_name} Web UI unreachable")
+                status = {
+                    "uptime": output,
+                    "load": "-",
+                }
+            else:
+                status = {
+                    "uptime": "Web UI OK",
+                    "load": "-",
+                }
+
         else:
-            status = {
-                "uptime": "Web UI OK",
-                "load": "-",
-            }
-
-    else:
-        host_command = r"""python3 - <<'REMOTE_PY'
+            host_command = r"""python3 - <<'REMOTE_PY'
 import json
 import os
 import subprocess
@@ -4980,354 +5016,352 @@ except Exception:
     print("APPS_RUNNING=-")
     print("APPS_TOTAL=-")
 REMOTE_PY"""
-        ok, output = run_ssh(ip, host_command)
+            ok, output = run_ssh(ip, host_command)
 
-        css = "ok" if ok else "bad"
+            css = "ok" if ok else "bad"
 
-        if not ok:
-            nok_issues.append(f"{host_name} unreachable")
-            status = {
-                "uptime": output,
-                "load": "-",
-            }
-        else:
-            status = parse_host_status(output)
+            if not ok:
+                nok_issues.append(f"{host_name} unreachable")
+                status = {
+                    "uptime": output,
+                    "load": "-",
+                }
+            else:
+                status = parse_host_status(output)
 
-    host_statuses[host_name] = {
-        "name": host_name,
-        "ip": ip,
-        "url": url,
-        "reachable": ok,
-        **status,
+        host_statuses[host_name] = {
+            "name": host_name,
+            "ip": ip,
+            "url": url,
+            "reachable": ok,
+            **status,
+        }
+
+        host_rows += f"""
+    <tr class="{css}">
+      <td><a class="host-link" href="{h(url)}" target="_blank" rel="noopener noreferrer">{h(host_name)}</a></td>
+      <td>{h(ip)}</td>
+      <td>{badge("YES" if ok else "NO", css)}</td>
+      <td><span class="mono">{h(status.get("uptime", "-"))}</span></td>
+      <td><span class="mono">{h(status.get("load", "-"))}</span></td>
+    </tr>
+    """
+
+    def local_output(cmd, default="-"):
+        try:
+            if isinstance(cmd, str):
+                return subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip() or default
+
+            return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip() or default
+        except Exception:
+            return default
+
+
+    def local_os_pretty_name():
+        try:
+            with open("/etc/os-release", "r") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        return line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        return "-"
+
+
+    def local_cpu_model():
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if line.lower().startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "-"
+
+
+    def local_memory_total():
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        gib = round(kb / 1024 / 1024)
+                        return f"{gib}Gi"
+        except Exception:
+            pass
+        return "-"
+
+
+    try:
+        local_load = ", ".join(f"{x:.2f}" for x in __import__("os").getloadavg())
+    except Exception:
+        local_load = "-"
+
+    host_statuses["Utility Node"] = {
+        "name": "Utility Node",
+        "ip": "192.168.30.11",
+        "url": "http://192.168.30.11",
+        "reachable": True,
+        "hostname": local_output(["hostname"]),
+        "os": local_os_pretty_name(),
+        "kernel": local_output(["uname", "-r"]),
+        "cpu_model": local_cpu_model(),
+        "cpu_cores": str(__import__("os").cpu_count() or "-"),
+        "memory_total": local_memory_total(),
+        "uptime": local_output(["uptime", "-p"]),
+        "load": local_load,
+        "apps_running": "-",
+        "apps_total": "-",
+        "containers_running": local_output("docker ps -q | wc -l"),
+        "containers_total": local_output("docker ps -aq | wc -l"),
     }
 
-    host_rows += f"""
-<tr class="{css}">
-  <td><a class="host-link" href="{h(url)}" target="_blank" rel="noopener noreferrer">{h(host_name)}</a></td>
-  <td>{h(ip)}</td>
-  <td>{badge("YES" if ok else "NO", css)}</td>
-  <td><span class="mono">{h(status.get("uptime", "-"))}</span></td>
-  <td><span class="mono">{h(status.get("load", "-"))}</span></td>
-</tr>
-"""
 
-def local_output(cmd, default="-"):
-    try:
-        if isinstance(cmd, str):
-            return subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip() or default
+    system_info_order = ["T330 TrueNAS", "T620 TrueNAS", "Utility Node"]
+    system_info_html = ""
 
-        return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip() or default
-    except Exception:
-        return default
+    for system_name in system_info_order:
+        status = host_statuses.get(system_name)
+
+        if not status:
+            continue
+
+        system_info_html += system_info_card(system_name, status)
+
+    pool_rows = ""
+    pool_rows_by_host = {host_name: "" for host_name in HOSTS}
+    storage_pool_total = 0
+    storage_pool_status_counts = {
+        "OK": 0,
+        "INFO": 0,
+        "WARNING": 0,
+        "BAD": 0,
+    }
+
+    for host_name, host_info in HOSTS.items():
+        ip = host_info["ip"]
+
+        pools, pool_error = collect_pools(ip)
+        pool_temps, temp_error = collect_pool_temperatures(ip)
+        pool_smart, smart_error = collect_pool_smart(ip)
+
+        if pool_error:
+            nok_issues.append(f"{host_name} pool query failed")
+            collection_errors.append((f"{host_name} pool query", pool_error))
+            pool_rows += f"""
+    <tr class="bad">
+      <td>{h(host_name)}</td>
+      <td colspan="8"><pre>{h(pool_error)}</pre></td>
+    </tr>
+    """
+            pool_rows_by_host[host_name] += f"""
+    <tr class="bad">
+      <td colspan="8"><pre>{h(pool_error)}</pre></td>
+    </tr>
+    """
+            continue
+
+        if temp_error:
+            info_issues.append(f"{host_name} disk temperature unavailable")
+            collection_errors.append((f"{host_name} temperature query", temp_error))
+
+        if smart_error:
+            info_issues.append(f"{host_name} SMART unavailable")
+            collection_errors.append((f"{host_name} SMART query", smart_error))
+
+        for pool in pools:
+            pool_name = pool["pool"]
+            health = pool["health"]
+
+            temp_label, temp_css, temp_issue = temperature_status(pool_name, pool_temps.get(pool_name))
+            smart_label, smart_css, smart_note = smart_status(pool_smart.get(pool_name))
+
+            if temp_issue:
+                if temp_css == "warning":
+                    warning_issues.append(f"{host_name} {temp_issue}")
+                elif temp_css == "info":
+                    info_issues.append(f"{host_name} {temp_issue}")
+
+            if smart_css == "bad":
+                nok_issues.append(f"{host_name} pool {pool_name}: {smart_note}")
+            elif smart_css == "info":
+                info_issues.append(f"{host_name} pool {pool_name}: {smart_note}")
+
+            if health != "ONLINE":
+                row_css = "bad"
+                nok_issues.append(f"{host_name} pool {pool_name} is {health}")
+            elif smart_css == "bad":
+                row_css = "bad"
+            elif temp_css == "warning":
+                row_css = "warning"
+            elif temp_css == "info" or smart_css == "info":
+                row_css = "info"
+            else:
+                row_css = "ok"
+
+            storage_pool_total += 1
+
+            if row_css == "bad":
+                storage_pool_status_counts["BAD"] += 1
+            elif row_css == "warning":
+                storage_pool_status_counts["WARNING"] += 1
+            elif row_css == "info":
+                storage_pool_status_counts["INFO"] += 1
+            else:
+                storage_pool_status_counts["OK"] += 1
+
+            pool_rows += f"""
+    <tr class="{row_css}">
+      <td>{h(host_name)}</td>
+      <td>{h(pool_name)}</td>
+      <td>{h(pool["size"])}</td>
+      <td>{h(pool["used"])}</td>
+      <td>{h(pool["free"])}</td>
+      <td>{h(pool["cap"])}</td>
+      <td>{temp_badge(temp_label, temp_css)}</td>
+      <td>{badge(smart_label, smart_css)}</td>
+      <td>{badge(health, "ok" if health == "ONLINE" else "bad")}</td>
+    </tr>
+    """
+            pool_rows_by_host[host_name] += f"""
+    <tr class="{row_css}">
+      <td>{h(pool_name)}</td>
+      <td>{h(pool["size"])}</td>
+      <td>{h(pool["cap"])}</td>
+      <td>{temp_badge(temp_label, temp_css)}</td>
+      <td>{badge(smart_label, smart_css)}</td>
+      <td>{badge(health, "ok" if health == "ONLINE" else "bad")}</td>
+    </tr>
+    """
 
 
-def local_os_pretty_name():
-    try:
-        with open("/etc/os-release", "r") as f:
-            for line in f:
-                if line.startswith("PRETTY_NAME="):
-                    return line.split("=", 1)[1].strip().strip('"')
-    except Exception:
-        pass
-    return "-"
 
+    t330_reps = []
 
-def local_cpu_model():
-    try:
-        with open("/proc/cpuinfo", "r") as f:
-            for line in f:
-                if line.lower().startswith("model name"):
-                    return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-    return "-"
+    for rep in replications:
+        target = rep.get("target_dataset") or ""
+        sources = rep.get("source_datasets") or []
 
+        if target.startswith("backup/t620/zfs-replication/") and sources:
+            t330_reps.append(rep)
 
-def local_memory_total():
-    try:
-        with open("/proc/meminfo", "r") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    kb = int(line.split()[1])
-                    gib = round(kb / 1024 / 1024)
-                    return f"{gib}Gi"
-    except Exception:
-        pass
-    return "-"
+    comparison_rows = ""
+    snapshot_summary_details = []
+    t330_snapshot_summary_details = []
+    replication_summary_details = []
 
+    snapshot_status_counts = {
+        "OK": 0,
+        "INFO": 0,
+        "WARNING": 0,
+        "BAD": 0,
+    }
 
-try:
-    local_load = ", ".join(f"{x:.2f}" for x in __import__("os").getloadavg())
-except Exception:
-    local_load = "-"
+    t330_snapshot_status_counts = {
+        "OK": 0,
+        "INFO": 0,
+        "WARNING": 0,
+        "BAD": 0,
+    }
 
-host_statuses["Utility Node"] = {
-    "name": "Utility Node",
-    "ip": "192.168.30.11",
-    "url": "http://192.168.30.11",
-    "reachable": True,
-    "hostname": local_output(["hostname"]),
-    "os": local_os_pretty_name(),
-    "kernel": local_output(["uname", "-r"]),
-    "cpu_model": local_cpu_model(),
-    "cpu_cores": str(__import__("os").cpu_count() or "-"),
-    "memory_total": local_memory_total(),
-    "uptime": local_output(["uptime", "-p"]),
-    "load": local_load,
-    "apps_running": "-",
-    "apps_total": "-",
-    "containers_running": local_output("docker ps -q | wc -l"),
-    "containers_total": local_output("docker ps -aq | wc -l"),
-}
+    for rep in sorted(t330_reps, key=lambda x: x.get("id", 0)):
+        source_dataset = rep.get("source_datasets")[0]
+        target_dataset = rep.get("target_dataset")
+        task = task_by_dataset.get(source_dataset)
 
+        source_snap, source_dt = latest_snapshot(t620_snapshots, source_dataset)
+        target_snap, target_dt = latest_snapshot(t330_snapshots, target_dataset)
 
-system_info_order = ["T330 TrueNAS", "T620 TrueNAS", "Utility Node"]
-system_info_html = ""
+        source_short = short_snapshot(source_snap)
+        target_short = short_snapshot(target_snap)
 
-for system_name in system_info_order:
-    status = host_statuses.get(system_name)
+        if source_short != "-" and source_short == target_short:
+            sync_label = "OK"
+            sync_css = "ok"
+        elif source_short == "-" or target_short == "-":
+            sync_label = "MISSING"
+            sync_css = "bad"
+            nok_issues.append(f"{source_dataset} snapshot missing on source or target")
+        else:
+            sync_label = "DIFFERENT"
+            sync_css = "warning"
+            warning_issues.append(f"{source_dataset} latest source/target snapshot differs")
 
-    if not status:
-        continue
+        fresh_label, fresh_css, fresh_note = freshness_status(task, source_dt)
 
-    system_info_html += system_info_card(system_name, status)
+        if fresh_css == "ok":
+            snapshot_status_counts["OK"] += 1
+        elif fresh_css == "info":
+            snapshot_status_counts["INFO"] += 1
+            info_issues.append(f"{source_dataset}: {fresh_note}")
+        elif fresh_css == "warning":
+            snapshot_status_counts["WARNING"] += 1
+            warning_issues.append(f"{source_dataset}: {fresh_note}")
+        else:
+            snapshot_status_counts["BAD"] += 1
+            nok_issues.append(f"{source_dataset}: {fresh_note}")
 
-pool_rows = ""
-pool_rows_by_host = {host_name: "" for host_name in HOSTS}
-storage_pool_total = 0
-storage_pool_status_counts = {
-    "OK": 0,
-    "INFO": 0,
-    "WARNING": 0,
-    "BAD": 0,
-}
+        snapshot_summary_details.append((source_dataset, fresh_label, fresh_css))
 
-for host_name, host_info in HOSTS.items():
-    ip = host_info["ip"]
+        rep_state = replication_state(rep)
+        rep_css = "ok" if rep_state == "FINISHED" else "info" if rep_state in ("PENDING", "RUNNING") else "bad"
 
-    pools, pool_error = collect_pools(ip)
-    pool_temps, temp_error = collect_pool_temperatures(ip)
-    pool_smart, smart_error = collect_pool_smart(ip)
+        if rep_css == "bad":
+            nok_issues.append(f"{rep.get('name', source_dataset)} replication state {rep_state}")
+        elif rep_css == "info":
+            info_issues.append(f"{rep.get('name', source_dataset)} replication state {rep_state}")
 
-    if pool_error:
-        nok_issues.append(f"{host_name} pool query failed")
-        collection_errors.append((f"{host_name} pool query", pool_error))
-        pool_rows += f"""
-<tr class="bad">
-  <td>{h(host_name)}</td>
-  <td colspan="8"><pre>{h(pool_error)}</pre></td>
-</tr>
-"""
-        pool_rows_by_host[host_name] += f"""
-<tr class="bad">
-  <td colspan="8"><pre>{h(pool_error)}</pre></td>
-</tr>
-"""
-        continue
+        replication_summary_details.append((source_dataset, rep_state, rep_css))
 
-    if temp_error:
-        info_issues.append(f"{host_name} disk temperature unavailable")
-        collection_errors.append((f"{host_name} temperature query", temp_error))
-
-    if smart_error:
-        info_issues.append(f"{host_name} SMART unavailable")
-        collection_errors.append((f"{host_name} SMART query", smart_error))
-
-    for pool in pools:
-        pool_name = pool["pool"]
-        health = pool["health"]
-
-        temp_label, temp_css, temp_issue = temperature_status(pool_name, pool_temps.get(pool_name))
-        smart_label, smart_css, smart_note = smart_status(pool_smart.get(pool_name))
-
-        if temp_issue:
-            if temp_css == "warning":
-                warning_issues.append(f"{host_name} {temp_issue}")
-            elif temp_css == "info":
-                info_issues.append(f"{host_name} {temp_issue}")
-
-        if smart_css == "bad":
-            nok_issues.append(f"{host_name} pool {pool_name}: {smart_note}")
-        elif smart_css == "info":
-            info_issues.append(f"{host_name} pool {pool_name}: {smart_note}")
-
-        if health != "ONLINE":
+        if sync_css == "bad" or rep_css == "bad":
             row_css = "bad"
-            nok_issues.append(f"{host_name} pool {pool_name} is {health}")
-        elif smart_css == "bad":
-            row_css = "bad"
-        elif temp_css == "warning":
+        elif sync_css == "warning" or fresh_css == "warning":
             row_css = "warning"
-        elif temp_css == "info" or smart_css == "info":
+        elif fresh_css == "info" or rep_css == "info":
             row_css = "info"
         else:
             row_css = "ok"
 
-        storage_pool_total += 1
+        comparison_rows += f"""
+    <tr class="{row_css}">
+      <td>{h(source_dataset)}</td>
+      <td>{fmt_dt(source_dt)}</td>
+      <td>{fmt_dt(target_dt)}</td>
+      <td>{badge(sync_label, sync_css)}</td>
+      <td>{badge(fresh_label, fresh_css)}</td>
+      <td>{badge(rep_state, rep_css)}</td>
+    </tr>
+    """
 
-        if row_css == "bad":
-            storage_pool_status_counts["BAD"] += 1
-        elif row_css == "warning":
-            storage_pool_status_counts["WARNING"] += 1
-        elif row_css == "info":
-            storage_pool_status_counts["INFO"] += 1
+    systems_layout_html = ""
+
+    for system_name in system_info_order:
+        status = host_statuses.get(system_name)
+
+        if not status:
+            continue
+
+        pool_rows_for_system = pool_rows_by_host.get(system_name, "")
+
+        if system_name == "T620 TrueNAS":
+            replication_rows_for_system = comparison_rows
+            replication_title = "T620 → T330 Snapshot / Replication"
+            replication_empty = "No replications configured."
         else:
-            storage_pool_status_counts["OK"] += 1
+            replication_rows_for_system = ""
+            replication_title = "Snapshot / Replication"
+            replication_empty = "No replications configured."
 
-        pool_rows += f"""
-<tr class="{row_css}">
-  <td>{h(host_name)}</td>
-  <td>{h(pool_name)}</td>
-  <td>{h(pool["size"])}</td>
-  <td>{h(pool["used"])}</td>
-  <td>{h(pool["free"])}</td>
-  <td>{h(pool["cap"])}</td>
-  <td>{temp_badge(temp_label, temp_css)}</td>
-  <td>{badge(smart_label, smart_css)}</td>
-  <td>{badge(health, "ok" if health == "ONLINE" else "bad")}</td>
-</tr>
-"""
-        pool_rows_by_host[host_name] += f"""
-<tr class="{row_css}">
-  <td>{h(pool_name)}</td>
-  <td>{h(pool["size"])}</td>
-  <td>{h(pool["cap"])}</td>
-  <td>{temp_badge(temp_label, temp_css)}</td>
-  <td>{badge(smart_label, smart_css)}</td>
-  <td>{badge(health, "ok" if health == "ONLINE" else "bad")}</td>
-</tr>
-"""
+        if system_name == "Utility Node":
+            pool_rows_for_system = ""
 
-
-
-t330_reps = []
-
-for rep in replications:
-    target = rep.get("target_dataset") or ""
-    sources = rep.get("source_datasets") or []
-
-    if target.startswith("backup/t620/zfs-replication/") and sources:
-        t330_reps.append(rep)
-
-comparison_rows = ""
-snapshot_summary_details = []
-t330_snapshot_summary_details = []
-replication_summary_details = []
-
-snapshot_status_counts = {
-    "OK": 0,
-    "INFO": 0,
-    "WARNING": 0,
-    "BAD": 0,
-}
-
-t330_snapshot_status_counts = {
-    "OK": 0,
-    "INFO": 0,
-    "WARNING": 0,
-    "BAD": 0,
-}
-
-for rep in sorted(t330_reps, key=lambda x: x.get("id", 0)):
-    source_dataset = rep.get("source_datasets")[0]
-    target_dataset = rep.get("target_dataset")
-    task = task_by_dataset.get(source_dataset)
-
-    source_snap, source_dt = latest_snapshot(t620_snapshots, source_dataset)
-    target_snap, target_dt = latest_snapshot(t330_snapshots, target_dataset)
-
-    source_short = short_snapshot(source_snap)
-    target_short = short_snapshot(target_snap)
-
-    if source_short != "-" and source_short == target_short:
-        sync_label = "OK"
-        sync_css = "ok"
-    elif source_short == "-" or target_short == "-":
-        sync_label = "MISSING"
-        sync_css = "bad"
-        nok_issues.append(f"{source_dataset} snapshot missing on source or target")
-    else:
-        sync_label = "DIFFERENT"
-        sync_css = "warning"
-        warning_issues.append(f"{source_dataset} latest source/target snapshot differs")
-
-    fresh_label, fresh_css, fresh_note = freshness_status(task, source_dt)
-
-    if fresh_css == "ok":
-        snapshot_status_counts["OK"] += 1
-    elif fresh_css == "info":
-        snapshot_status_counts["INFO"] += 1
-        info_issues.append(f"{source_dataset}: {fresh_note}")
-    elif fresh_css == "warning":
-        snapshot_status_counts["WARNING"] += 1
-        warning_issues.append(f"{source_dataset}: {fresh_note}")
-    else:
-        snapshot_status_counts["BAD"] += 1
-        nok_issues.append(f"{source_dataset}: {fresh_note}")
-
-    snapshot_summary_details.append((source_dataset, fresh_label, fresh_css))
-
-    rep_state = replication_state(rep)
-    rep_css = "ok" if rep_state == "FINISHED" else "info" if rep_state in ("PENDING", "RUNNING") else "bad"
-
-    if rep_css == "bad":
-        nok_issues.append(f"{rep.get('name', source_dataset)} replication state {rep_state}")
-    elif rep_css == "info":
-        info_issues.append(f"{rep.get('name', source_dataset)} replication state {rep_state}")
-
-    replication_summary_details.append((source_dataset, rep_state, rep_css))
-
-    if sync_css == "bad" or rep_css == "bad":
-        row_css = "bad"
-    elif sync_css == "warning" or fresh_css == "warning":
-        row_css = "warning"
-    elif fresh_css == "info" or rep_css == "info":
-        row_css = "info"
-    else:
-        row_css = "ok"
-
-    comparison_rows += f"""
-<tr class="{row_css}">
-  <td>{h(source_dataset)}</td>
-  <td>{fmt_dt(source_dt)}</td>
-  <td>{fmt_dt(target_dt)}</td>
-  <td>{badge(sync_label, sync_css)}</td>
-  <td>{badge(fresh_label, fresh_css)}</td>
-  <td>{badge(rep_state, rep_css)}</td>
-</tr>
-"""
-
-systems_layout_html = ""
-
-for system_name in system_info_order:
-    status = host_statuses.get(system_name)
-
-    if not status:
-        continue
-
-    pool_rows_for_system = pool_rows_by_host.get(system_name, "")
-
-    if system_name == "T620 TrueNAS":
-        replication_rows_for_system = comparison_rows
-        replication_title = "T620 → T330 Snapshot / Replication"
-        replication_empty = "No replications configured."
-    else:
-        replication_rows_for_system = ""
-        replication_title = "Snapshot / Replication"
-        replication_empty = "No replications configured."
-
-    if system_name == "Utility Node":
-        pool_rows_for_system = ""
-
-    systems_layout_html += f"""
-  <div class="system-row three-column">
-    {system_info_card(system_name, status)}
-    {pool_status_card(system_name, pool_rows_for_system)}
-    {replication_status_card(replication_rows_for_system, replication_title, replication_empty)}
-  </div>
-"""
-
-
+        systems_layout_html += f"""
+      <div class="system-row three-column">
+        {system_info_card(system_name, status)}
+        {pool_status_card(system_name, pool_rows_for_system)}
+        {replication_status_card(replication_rows_for_system, replication_title, replication_empty)}
+      </div>
+    """
 
 configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
 configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
@@ -5449,84 +5483,125 @@ config_protection_preview_html = build_config_protection_preview(
 )
 
 
-enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
+if reference_runtime_enabled:
+    enabled_snapshot_tasks = len([t for t in snapshot_tasks if t.get("enabled")])
 
-snapshot_detail_html = ""
+    snapshot_detail_html = ""
 
-for dataset, label, css in snapshot_summary_details:
-    snapshot_detail_html += f"""
-      <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
-"""
+    for dataset, label, css in snapshot_summary_details:
+        snapshot_detail_html += f"""
+          <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
+    """
 
-enabled_t330_snapshot_tasks = len([t for t in t330_snapshot_tasks if t.get("enabled")])
+    enabled_t330_snapshot_tasks = len([t for t in t330_snapshot_tasks if t.get("enabled")])
 
-for task in sorted(t330_snapshot_tasks, key=lambda x: x.get("dataset") or ""):
-    dataset = task.get("dataset")
-    latest_snap, latest_dt = latest_snapshot(t330_snapshots, dataset)
-    fresh_label, fresh_css, fresh_note = freshness_status(task, latest_dt)
+    for task in sorted(t330_snapshot_tasks, key=lambda x: x.get("dataset") or ""):
+        dataset = task.get("dataset")
+        latest_snap, latest_dt = latest_snapshot(t330_snapshots, dataset)
+        fresh_label, fresh_css, fresh_note = freshness_status(task, latest_dt)
 
-    if fresh_css == "ok":
-        t330_snapshot_status_counts["OK"] += 1
-    elif fresh_css == "info":
-        t330_snapshot_status_counts["INFO"] += 1
-        info_issues.append(f"{dataset}: {fresh_note}")
-    elif fresh_css == "warning":
-        t330_snapshot_status_counts["WARNING"] += 1
-        warning_issues.append(f"{dataset}: {fresh_note}")
-    else:
-        t330_snapshot_status_counts["BAD"] += 1
-        nok_issues.append(f"{dataset}: {fresh_note}")
+        if fresh_css == "ok":
+            t330_snapshot_status_counts["OK"] += 1
+        elif fresh_css == "info":
+            t330_snapshot_status_counts["INFO"] += 1
+            info_issues.append(f"{dataset}: {fresh_note}")
+        elif fresh_css == "warning":
+            t330_snapshot_status_counts["WARNING"] += 1
+            warning_issues.append(f"{dataset}: {fresh_note}")
+        else:
+            t330_snapshot_status_counts["BAD"] += 1
+            nok_issues.append(f"{dataset}: {fresh_note}")
 
-    t330_snapshot_summary_details.append((dataset, fresh_label, fresh_css))
+        t330_snapshot_summary_details.append((dataset, fresh_label, fresh_css))
 
-t330_snapshot_detail_html = ""
+    t330_snapshot_detail_html = ""
 
-for dataset, label, css in t330_snapshot_summary_details:
-    t330_snapshot_detail_html += f"""
-      <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
-"""
+    for dataset, label, css in t330_snapshot_summary_details:
+        t330_snapshot_detail_html += f"""
+          <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
+    """
 
-finished_replications = len([x for x in replication_summary_details if x[1] == "FINISHED"])
-replication_detail_html = ""
+    finished_replications = len([x for x in replication_summary_details if x[1] == "FINISHED"])
+    replication_detail_html = ""
 
-for dataset, label, css in replication_summary_details:
-    replication_detail_html += f"""
-      <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
-"""
+    for dataset, label, css in replication_summary_details:
+        replication_detail_html += f"""
+          <span><strong>{h(dataset)}</strong> <span class="{status_text_class(label)}">{h(label)}</span></span>
+    """
 
 
-beckhoff_service_statuses, beckhoff_service_errors = collect_local_docker_services(BECKHOFF_SERVICES)
+    beckhoff_service_statuses, beckhoff_service_errors = collect_local_docker_services(BECKHOFF_SERVICES)
 
-for error in beckhoff_service_errors:
-    collection_errors.append(("Utility Node service query", error))
+    for error in beckhoff_service_errors:
+        collection_errors.append(("Utility Node service query", error))
 
-t620_service_statuses, t620_service_error = collect_truenas_app_services(T620_IP, T620_SERVICES)
+    t620_service_statuses, t620_service_error = collect_truenas_app_services(T620_IP, T620_SERVICES)
 
-if t620_service_error:
-    collection_errors.append(("T620 app query", t620_service_error))
+    if t620_service_error:
+        collection_errors.append(("T620 app query", t620_service_error))
 
-for service in BECKHOFF_SERVICES:
-    status = beckhoff_service_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
-    label = status["label"]
-    css = status["css"]
+    for service in BECKHOFF_SERVICES:
+        status = beckhoff_service_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
+        label = status["label"]
+        css = status["css"]
 
-    if css == "bad":
-        nok_issues.append(f"Utility Node service {service['display']} is {label}")
-    elif css == "info":
-        info_issues.append(f"Utility Node service {service['display']} is {label}")
+        if css == "bad":
+            nok_issues.append(f"Utility Node service {service['display']} is {label}")
+        elif css == "info":
+            info_issues.append(f"Utility Node service {service['display']} is {label}")
 
-for service in T620_SERVICES:
-    status = t620_service_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
-    label = status["label"]
-    css = status["css"]
+    for service in T620_SERVICES:
+        status = t620_service_statuses.get(service["id"], {"label": "UNKNOWN", "css": "info"})
+        label = status["label"]
+        css = status["css"]
 
-    if css == "bad":
-        nok_issues.append(f"T620 service {service['display']} is {label}")
-    elif css == "info":
-        info_issues.append(f"T620 service {service['display']} is {label}")
+        if css == "bad":
+            nok_issues.append(f"T620 service {service['display']} is {label}")
+        elif css == "info":
+            info_issues.append(f"T620 service {service['display']} is {label}")
 
-beckhoff_service_summary = build_service_summary(BECKHOFF_SERVICES, beckhoff_service_statuses)
-t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuses)
+    beckhoff_service_summary = build_service_summary(BECKHOFF_SERVICES, beckhoff_service_statuses)
+    t620_service_summary = build_service_summary(T620_SERVICES, t620_service_statuses)
+
+    reference_summary_html = f"""
+    <div class="summary-row">
+      <div class="summary-card {'info' if t330_snapshot_status_counts["INFO"] else 'warning' if t330_snapshot_status_counts["WARNING"] else 'bad' if t330_snapshot_status_counts["BAD"] else ''}">
+        <div class="title">T330 Snapshot Tasks</div>
+        <div class="value">{h(enabled_t330_snapshot_tasks)} Enabled · {t330_snapshot_status_counts["OK"]} OK · {t330_snapshot_status_counts["INFO"]} Info</div>
+        <div class="summary-details">
+          {t330_snapshot_detail_html}
+        </div>
+      </div>
+      <div class="summary-card {'info' if snapshot_status_counts["INFO"] else 'warning' if snapshot_status_counts["WARNING"] else 'bad' if snapshot_status_counts["BAD"] else ''}">
+        <div class="title">T620 Snapshot Tasks</div>
+        <div class="value">{h(enabled_snapshot_tasks)} Enabled · {snapshot_status_counts["OK"]} OK · {snapshot_status_counts["INFO"]} Info</div>
+        <div class="summary-details">
+          {snapshot_detail_html}
+        </div>
+      </div>
+      <div class="summary-card">
+        <div class="title">T620 Replication</div>
+        <div class="value">{h(len(t330_reps))} To T330 · {h(finished_replications)} Finished</div>
+        <div class="summary-details">
+          {replication_detail_html}
+        </div>
+      </div>
+      <div class="summary-card {h(t620_service_summary["css"])}">
+        <div class="title">T620 Services</div>
+        <div class="value">{h(t620_service_summary["value"])}</div>
+        <div class="summary-details service-details {h(t620_service_summary["details_class"])}">
+          {t620_service_summary["details"]}
+        </div>
+      </div>
+      <div class="summary-card {h(beckhoff_service_summary["css"])}">
+        <div class="title">Utility Node Services</div>
+        <div class="value">{h(beckhoff_service_summary["value"])}</div>
+        <div class="summary-details service-details {h(beckhoff_service_summary["details_class"])}">
+          {beckhoff_service_summary["details"]}
+        </div>
+      </div>
+    </div>
+    """
 
 config_http_services = normalize_config_http_services(CONFIG_ENABLED_SERVICES)
 config_http_statuses = collect_http_services(config_http_services)
@@ -6537,43 +6612,7 @@ pre, .mono {{
   </div>
 </div>
 
-<div class="summary-row">
-  <div class="summary-card {'info' if t330_snapshot_status_counts["INFO"] else 'warning' if t330_snapshot_status_counts["WARNING"] else 'bad' if t330_snapshot_status_counts["BAD"] else ''}">
-    <div class="title">T330 Snapshot Tasks</div>
-    <div class="value">{h(enabled_t330_snapshot_tasks)} Enabled · {t330_snapshot_status_counts["OK"]} OK · {t330_snapshot_status_counts["INFO"]} Info</div>
-    <div class="summary-details">
-      {t330_snapshot_detail_html}
-    </div>
-  </div>
-  <div class="summary-card {'info' if snapshot_status_counts["INFO"] else 'warning' if snapshot_status_counts["WARNING"] else 'bad' if snapshot_status_counts["BAD"] else ''}">
-    <div class="title">T620 Snapshot Tasks</div>
-    <div class="value">{h(enabled_snapshot_tasks)} Enabled · {snapshot_status_counts["OK"]} OK · {snapshot_status_counts["INFO"]} Info</div>
-    <div class="summary-details">
-      {snapshot_detail_html}
-    </div>
-  </div>
-  <div class="summary-card">
-    <div class="title">T620 Replication</div>
-    <div class="value">{h(len(t330_reps))} To T330 · {h(finished_replications)} Finished</div>
-    <div class="summary-details">
-      {replication_detail_html}
-    </div>
-  </div>
-  <div class="summary-card {h(t620_service_summary["css"])}">
-    <div class="title">T620 Services</div>
-    <div class="value">{h(t620_service_summary["value"])}</div>
-    <div class="summary-details service-details {h(t620_service_summary["details_class"])}">
-      {t620_service_summary["details"]}
-    </div>
-  </div>
-  <div class="summary-card {h(beckhoff_service_summary["css"])}">
-    <div class="title">Utility Node Services</div>
-    <div class="value">{h(beckhoff_service_summary["value"])}</div>
-    <div class="summary-details service-details {h(beckhoff_service_summary["details_class"])}">
-      {beckhoff_service_summary["details"]}
-    </div>
-  </div>
-</div>
+{reference_summary_html}
 
 {public_four_card_summary_preview_html}
 
