@@ -42,6 +42,13 @@ FUNCTIONS_UNDER_TEST = {
     "collect_config_system_info",
     "config_system_info_display_os",
     "config_system_info_activity_value",
+    "runtime_detail_presentation",
+    "runtime_detail_result_text",
+    "build_config_local_storage_preview",
+    "build_config_backup_preview",
+    "build_config_protection_preview",
+    "build_config_image_update_preview",
+    "build_configured_hosts_preview",
     "build_config_system_info_preview",
     "normalize_config_truenas_pool_hosts",
     "config_pool_integer",
@@ -78,7 +85,7 @@ FUNCTIONS_UNDER_TEST = {
     "configured_host_sort_key",
     "config_error_indicates_host_unreachable",
     "classify_collector_error",
-    "public_overall_status_severity",
+    "public_status_severity",
     "build_public_overall_status",
     "build_collector_errors_section",
     "config_host_service_unreachable",
@@ -101,7 +108,6 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_protection_summary_card",
     "build_public_services_summary_card",
     "build_public_four_card_summary_preview",
-    "promote_public_runtime_detail_html",
     "config_replication_row_matches_relationship",
     "apply_config_protection_replication_overlay",
     "config_snapshot_row_covers_dataset",
@@ -313,8 +319,8 @@ config_error_indicates_host_unreachable = FUNCTIONS[
 classify_collector_error = FUNCTIONS[
     "classify_collector_error"
 ]
-public_overall_status_severity = FUNCTIONS[
-    "public_overall_status_severity"
+public_status_severity = FUNCTIONS[
+    "public_status_severity"
 ]
 build_public_overall_status = FUNCTIONS[
     "build_public_overall_status"
@@ -355,8 +361,26 @@ build_public_services_summary_card = FUNCTIONS[
 build_public_four_card_summary_preview = FUNCTIONS[
     "build_public_four_card_summary_preview"
 ]
-promote_public_runtime_detail_html = FUNCTIONS[
-    "promote_public_runtime_detail_html"
+runtime_detail_presentation = FUNCTIONS[
+    "runtime_detail_presentation"
+]
+runtime_detail_result_text = FUNCTIONS[
+    "runtime_detail_result_text"
+]
+build_config_local_storage_preview = FUNCTIONS[
+    "build_config_local_storage_preview"
+]
+build_config_backup_preview = FUNCTIONS[
+    "build_config_backup_preview"
+]
+build_config_protection_preview = FUNCTIONS[
+    "build_config_protection_preview"
+]
+build_config_image_update_preview = FUNCTIONS[
+    "build_config_image_update_preview"
+]
+build_configured_hosts_preview = FUNCTIONS[
+    "build_configured_hosts_preview"
 ]
 config_replication_row_matches_relationship = FUNCTIONS[
     "config_replication_row_matches_relationship"
@@ -1891,6 +1915,30 @@ class CollectorErrorClassificationTests(unittest.TestCase):
         self.assertEqual(result["label"], "TIMEOUT")
         self.assertEqual(result["css"], "bad")
 
+
+
+class PublicStatusSeverityTests(unittest.TestCase):
+    def test_shared_public_severity_contract(self):
+        cases = (
+            ({"label": "OK", "css": "ok"}, 0),
+            ({"label": "UP", "css": "ok"}, 0),
+            ({"label": "ONLINE", "css": "info"}, 0),
+            ({"label": "UNKNOWN", "css": "info"}, 1),
+            ({"label": "UPDATE", "css": "info"}, 1),
+            ({"label": "WARNING", "css": "warning"}, 2),
+            ({"label": "OLD", "css": "info"}, 2),
+            ({"label": "DISABLED", "css": "disabled"}, 2),
+            ({"label": "DOWN", "css": "bad"}, 3),
+            ({"label": "MISSING", "css": "info"}, 3),
+            ({"label": "UNREACHABLE", "css": "info"}, 3),
+        )
+
+        for status, expected in cases:
+            with self.subTest(status=status):
+                self.assertEqual(
+                    public_status_severity(status),
+                    expected,
+                )
 
 
 class PublicOverallStatusTests(unittest.TestCase):
@@ -5705,59 +5753,418 @@ class FourCardSummaryPreviewTests(unittest.TestCase):
         )
 
 
-class PublicRuntimeDetailPromotionTests(unittest.TestCase):
-    def test_promotes_all_obsolete_public_detail_wording(self):
-        legacy_html = "\n".join(
+class PublicRuntimeDetailPresentationTests(unittest.TestCase):
+    def test_presentation_helper_selects_explicit_context(self):
+        reference = runtime_detail_presentation(
+            "Reference description.",
+            "Public description.",
+        )
+        public = runtime_detail_presentation(
+            "Reference description.",
+            "Public description.",
+            promoted=True,
+        )
+        shared_public = runtime_detail_presentation(
+            "Shared description.",
+            promoted=True,
+        )
+
+        self.assertEqual(
+            reference,
+            ("Config Preview", "Reference description."),
+        )
+        self.assertEqual(
+            public,
+            ("Runtime Detail", "Public description."),
+        )
+        self.assertEqual(
+            shared_public,
+            ("Runtime Detail", "Shared description."),
+        )
+
+    def test_result_text_translation_is_render_only(self):
+        cases = (
             (
-                '<div class="configured-hosts-kicker">Config Preview</div>',
-                "Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.",
-                "These preview results do not affect Overall Status yet.",
-                (
-                    "Protection relationships are config-driven preview data. "
-                    "They document backup or replication intent without changing "
-                    "the existing reference replication checks yet."
-                ),
-                "unknown protection relationships are preview-only for now",
-                "replication preview · tank/media · target prefix: backup",
                 "docker checks are not active in the public preview yet",
-            )
+                "docker checks are not active in the public runtime yet",
+            ),
+            (
+                "archive protection relationships are preview-only for now",
+                "archive protection relationships are not actively checked yet",
+            ),
+            (
+                "replication preview · 1 dataset · target prefix: backup",
+                "replication intent · 1 dataset · target prefix: backup",
+            ),
+            (
+                "healthy",
+                "healthy",
+            ),
         )
 
-        promoted_html = promote_public_runtime_detail_html(
-            legacy_html
+        for reference_text, public_text in cases:
+            with self.subTest(reference_text=reference_text):
+                self.assertEqual(
+                    runtime_detail_result_text(reference_text),
+                    reference_text,
+                )
+                self.assertEqual(
+                    runtime_detail_result_text(
+                        reference_text,
+                        promoted=True,
+                    ),
+                    public_text,
+                )
+
+    def test_all_detail_builders_render_explicit_presentation(self):
+        local_checks = [
+            {
+                "id": "root",
+                "label": "Root",
+                "host": "collector",
+                "mount": "/",
+            }
+        ]
+        local_statuses = {
+            "root": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "healthy",
+            }
+        }
+
+        backup_checks = [
+            {
+                "id": "backup",
+                "name": "Collector Backup",
+                "host": "collector",
+                "marker_file": "/tmp/backup.marker",
+            }
+        ]
+        backup_statuses = {
+            "backup": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "fresh",
+            }
+        }
+
+        relationships = [
+            {
+                "id": "primary-copy",
+                "name": "Primary Copy",
+                "type": "replication",
+                "source_host": "nas-primary",
+                "target_host": "nas-backup",
+                "datasets": ["tank/data"],
+            }
+        ]
+        protection_statuses = {
+            "primary-copy": {
+                "label": "CONFIGURED",
+                "css": "info",
+                "raw": (
+                    "replication preview · 1 dataset · "
+                    "target prefix: backup"
+                ),
+            }
+        }
+
+        snapshot_rows = [
+            {
+                "host_id": "nas-primary",
+                "host_name": "Primary NAS",
+                "dataset": "tank/data",
+                "task_enabled": True,
+                "label": "OK",
+                "css": "ok",
+                "latest": "-",
+                "latest_time": "-",
+                "raw": "fresh",
+            }
+        ]
+
+        replication_rows = [
+            {
+                "host_id": "nas-primary",
+                "host_name": "Primary NAS",
+                "task_enabled": True,
+                "execution_state": "FINISHED",
+                "source_datasets": ["tank/data"],
+                "direction": "PUSH",
+                "transport": "SSH",
+                "name": "Primary Copy",
+                "task_id": 7,
+                "target_dataset": "backup/data",
+                "execution_time": "2026-06-09 12:00",
+                "last_snapshot": "tank/data@snapshot",
+                "label": "OK",
+                "css": "ok",
+                "raw": "successful",
+            }
+        ]
+
+        image_update_rows = [
+            {
+                "host_name": "Collector",
+                "provider": "diun",
+                "version": "4.29",
+                "tracked": 4,
+                "updates": 0,
+                "details": [],
+                "label": "OK",
+                "css": "ok",
+                "raw": "current",
+            }
+        ]
+
+        configured_hosts = [
+            {
+                "id": "collector",
+                "display_name": "Collector",
+                "hostname": "collector",
+                "type": "linux",
+                "address": "192.0.2.10",
+                "enabled": True,
+                "web_url": "https://collector.example.test",
+            }
+        ]
+        web_statuses = {
+            "collector": {
+                "label": "UP",
+                "css": "ok",
+                "raw": "HTTP 200",
+            }
+        }
+
+        system_statuses = {
+            "collector": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "healthy",
+                "hostname": "collector",
+                "os_pretty": "Ubuntu",
+                "kernel": "6.8.0",
+                "uptime": "1 day",
+                "cpu_model": "Example CPU",
+                "cpu_cores": "4",
+                "memory_total": "8 GiB",
+                "load": "0.10",
+                "activity": "containers",
+                "containers_running": "2",
+                "containers_total": "2",
+            }
+        }
+
+        pool_hosts = [
+            {
+                "key": "nas-primary",
+                "display_name": "Primary NAS",
+            }
+        ]
+        pool_rows = [
+            {
+                "host_key": "nas-primary",
+                "label": "OK",
+                "css": "ok",
+                "pool_name": "tank",
+                "status": "ONLINE",
+                "size_bytes": 1000,
+                "allocated_bytes": 400,
+                "available_bytes": 600,
+                "used_percent": 40.0,
+            }
+        ]
+        pool_statuses = {
+            "nas-primary": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "1 pool discovered",
+            }
+        }
+
+        disk_health_rows = [
+            {
+                "host_key": "nas-primary",
+                "label": "OK",
+                "css": "ok",
+                "pool_name": "tank",
+                "temperature": {
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "35 C",
+                },
+                "smart": {
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "PASSED",
+                },
+                "raw": "healthy",
+            }
+        ]
+        disk_health_statuses = {
+            "nas-primary": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "1 pool checked",
+            }
+        }
+
+        renderers = {
+            "local storage": lambda promoted: (
+                build_config_local_storage_preview(
+                    local_checks,
+                    local_statuses,
+                    promoted=promoted,
+                )
+            ),
+            "backup": lambda promoted: build_config_backup_preview(
+                backup_checks,
+                backup_statuses,
+                promoted=promoted,
+            ),
+            "protection": lambda promoted: (
+                build_config_protection_preview(
+                    relationships,
+                    protection_statuses,
+                    promoted=promoted,
+                )
+            ),
+            "snapshots": lambda promoted: (
+                build_config_truenas_snapshot_preview(
+                    snapshot_rows,
+                    promoted=promoted,
+                )
+            ),
+            "replications": lambda promoted: (
+                build_config_truenas_replication_preview(
+                    replication_rows,
+                    promoted=promoted,
+                )
+            ),
+            "image updates": lambda promoted: (
+                build_config_image_update_preview(
+                    image_update_rows,
+                    promoted=promoted,
+                )
+            ),
+            "system information": lambda promoted: (
+                build_config_system_info_preview(
+                    configured_hosts,
+                    system_statuses,
+                    promoted=promoted,
+                )
+            ),
+            "pools": lambda promoted: (
+                build_config_truenas_pool_preview(
+                    pool_hosts,
+                    pool_rows,
+                    pool_statuses,
+                    promoted=promoted,
+                )
+            ),
+            "disk health": lambda promoted: (
+                build_config_truenas_disk_health_preview(
+                    pool_hosts,
+                    disk_health_rows,
+                    disk_health_statuses,
+                    promoted=promoted,
+                )
+            ),
+            "configured hosts": lambda promoted: (
+                build_configured_hosts_preview(
+                    configured_hosts,
+                    web_statuses,
+                    promoted=promoted,
+                )
+            ),
+        }
+
+        for name, render in renderers.items():
+            with self.subTest(builder=name):
+                reference_html = render(False)
+                public_html = render(True)
+
+                self.assertIn("Config Preview", reference_html)
+                self.assertNotIn("Runtime Detail", reference_html)
+
+                self.assertIn("Runtime Detail", public_html)
+                self.assertNotIn("Config Preview", public_html)
+
+        self.assertIn(
+            "replication preview ·",
+            renderers["protection"](False),
         )
-
-        for obsolete_text in (
-            "Config Preview",
-            "preview-only",
-            "preview results",
-            "preview data",
-            "replication preview",
-            "public preview",
-        ):
-            self.assertNotIn(
-                obsolete_text,
-                promoted_html,
-            )
-
-        for promoted_text in (
-            "Runtime Detail",
+        self.assertIn(
+            "replication intent ·",
+            renderers["protection"](True),
+        )
+        self.assertIn(
             "Configured hosts and Web UI checks contribute "
             "to public Overall Status.",
+            renderers["configured hosts"](True),
+        )
+        self.assertIn(
             "These results contribute to public Overall Status.",
-            "include available live status overlays",
-            "not actively checked yet",
-            "replication intent ·",
-            "public runtime yet",
-        ):
-            self.assertIn(
-                promoted_text,
-                promoted_html,
-            )
+            renderers["snapshots"](True),
+        )
+        self.assertIn(
+            "affect the Storage card and contribute "
+            "to public Overall Status.",
+            renderers["disk health"](True),
+        )
 
-    def test_empty_detail_html_remains_empty(self):
         self.assertEqual(
-            promote_public_runtime_detail_html(""),
+            protection_statuses["primary-copy"]["raw"],
+            (
+                "replication preview · 1 dataset · "
+                "target prefix: backup"
+            ),
+        )
+
+    def test_empty_detail_builders_remain_empty(self):
+        self.assertEqual(
+            build_config_local_storage_preview([], {}),
+            "",
+        )
+        self.assertEqual(
+            build_config_backup_preview([], {}),
+            "",
+        )
+        self.assertEqual(
+            build_config_protection_preview([], {}),
+            "",
+        )
+        self.assertEqual(
+            build_config_truenas_snapshot_preview([]),
+            "",
+        )
+        self.assertEqual(
+            build_config_truenas_replication_preview([]),
+            "",
+        )
+        self.assertEqual(
+            build_config_image_update_preview([]),
+            "",
+        )
+        self.assertEqual(
+            build_config_system_info_preview([], {}),
+            "",
+        )
+        self.assertEqual(
+            build_config_truenas_pool_preview([], [], {}),
+            "",
+        )
+        self.assertEqual(
+            build_config_truenas_disk_health_preview(
+                [],
+                [],
+                {},
+            ),
+            "",
+        )
+        self.assertEqual(
+            build_configured_hosts_preview([]),
             "",
         )
 
@@ -6711,6 +7118,75 @@ class ConfiguredTrueNASPoolRuntimeTests(unittest.TestCase):
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):
+    def test_healthy_web_ui_without_telemetry_counts_as_ok(self):
+        host = {
+            "id": "collector",
+            "enabled": True,
+            "display_name": "Collector",
+            "type": "linux",
+        }
+        web_status = {
+            "label": "UP",
+            "css": "ok",
+            "raw": "HTTP 200",
+        }
+        system_info_status = {
+            "label": "NOT CHECKED",
+            "css": "info",
+            "raw": "system information not checked",
+        }
+
+        card = build_public_systems_summary_card(
+            [host],
+            {"collector": web_status},
+            [],
+            {},
+            {"collector": system_info_status},
+        )
+
+        self.assertIn(
+            "1 Systems · 1 OK · 0 DOWN",
+            card,
+        )
+        self.assertNotIn(" · 1 INFO", card)
+        self.assertNotIn("summary-card info", card)
+        self.assertIn(">UP</span>", card)
+
+    def test_warning_grade_system_status_uses_warning_card(self):
+        host = {
+            "id": "collector",
+            "enabled": True,
+            "display_name": "Collector",
+            "type": "linux",
+        }
+
+        card = build_public_systems_summary_card(
+            [host],
+            {
+                "collector": {
+                    "label": "UP",
+                    "css": "ok",
+                    "raw": "HTTP 200",
+                }
+            },
+            [],
+            {},
+            {
+                "collector": {
+                    "label": "UNKNOWN",
+                    "css": "warning",
+                    "raw": "telemetry parse failure",
+                }
+            },
+        )
+
+        self.assertIn(
+            "1 Systems · 0 OK · 0 DOWN · 1 WARNING",
+            card,
+        )
+        self.assertIn("summary-card warning", card)
+        self.assertNotIn(" · 1 INFO", card)
+
     def setUp(self):
         self.host = {
             "id": "t620",

@@ -1735,10 +1735,68 @@ def collect_config_local_storage_checks(checks):
     return statuses
 
 
-def build_config_local_storage_preview(checks, statuses):
+def runtime_detail_presentation(
+    reference_description,
+    public_description=None,
+    promoted=False,
+):
+    if promoted:
+        description = (
+            public_description
+            if public_description is not None
+            else reference_description
+        )
+        return "Runtime Detail", description
+
+    return "Config Preview", reference_description
+
+
+def runtime_detail_result_text(value, promoted=False):
+    if not promoted:
+        return value
+
+    text = str(value)
+
+    check_suffix = (
+        " checks are not active in the public preview yet"
+    )
+    protection_suffix = (
+        " protection relationships are preview-only for now"
+    )
+    replication_prefix = "replication preview ·"
+
+    if text.endswith(check_suffix):
+        return (
+            text[:-len(check_suffix)]
+            + " checks are not active in the public runtime yet"
+        )
+
+    if text.endswith(protection_suffix):
+        return (
+            text[:-len(protection_suffix)]
+            + " protection relationships are not actively checked yet"
+        )
+
+    if text.startswith(replication_prefix):
+        return (
+            "replication intent ·"
+            + text[len(replication_prefix):]
+        )
+
+    return text
+
+
+def build_config_local_storage_preview(checks, statuses, promoted=False):
     if not checks:
         return ""
 
+    kicker, description = runtime_detail_presentation(
+        (
+            "Collector-local and eligible remote Linux df checks "
+            "are active. Ineligible remote checks remain NOT CHECKED."
+        ),
+        promoted=promoted,
+    )
     rows = ""
 
     for check in checks:
@@ -1754,7 +1812,7 @@ def build_config_local_storage_preview(checks, statuses):
         <td>{h(check.get("label", "-"))}</td>
         <td><span class="mono">{h(check.get("host", "-"))}</span></td>
         <td><span class="mono">{h(check.get("mount", "-"))}</span></td>
-        <td>{h(raw)}</td>
+        <td>{h(runtime_detail_result_text(raw, promoted))}</td>
       </tr>
 """
 
@@ -1762,12 +1820,12 @@ def build_config_local_storage_preview(checks, statuses):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured Local Storage</h3>
       </div>
       <div class="configured-hosts-meta">{h(len(checks))} checks</div>
     </div>
-    <p class="muted-small">Collector-local and eligible remote Linux df checks are active. Ineligible remote checks remain NOT CHECKED.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -2159,10 +2217,18 @@ def collect_config_backup_checks(checks):
     return statuses
 
 
-def build_config_backup_preview(checks, statuses):
+def build_config_backup_preview(checks, statuses, promoted=False):
     if not checks:
         return ""
 
+    kicker, description = runtime_detail_presentation(
+        (
+            "Collector-local and eligible remote Linux marker-file "
+            "and optional systemd timer checks are active. "
+            "Ineligible remote checks remain NOT CHECKED."
+        ),
+        promoted=promoted,
+    )
     rows = ""
 
     for check in checks:
@@ -2178,7 +2244,7 @@ def build_config_backup_preview(checks, statuses):
         <td>{h(check.get("name", "-"))}</td>
         <td><span class="mono">{h(check.get("host", "-"))}</span></td>
         <td><span class="mono">{h(check.get("marker_file", "-"))}</span></td>
-        <td>{h(raw)}</td>
+        <td>{h(runtime_detail_result_text(raw, promoted))}</td>
       </tr>
 """
 
@@ -2186,12 +2252,12 @@ def build_config_backup_preview(checks, statuses):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured Backup Status</h3>
       </div>
       <div class="configured-hosts-meta">{h(len(checks))} checks</div>
     </div>
-    <p class="muted-small">Collector-local and eligible remote Linux marker-file and optional systemd timer checks are active. Ineligible remote checks remain NOT CHECKED.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -2597,10 +2663,22 @@ def apply_config_protection_snapshot_overlay(
     return updated
 
 
-def build_config_protection_preview(relationships, statuses):
+def build_config_protection_preview(relationships, statuses, promoted=False):
     if not relationships:
         return ""
 
+    kicker, description = runtime_detail_presentation(
+        (
+            "Protection relationships are config-driven preview data. "
+            "They document backup or replication intent without "
+            "changing the existing reference replication checks yet."
+        ),
+        (
+            "Protection relationships document backup or replication "
+            "intent and include available live status overlays."
+        ),
+        promoted=promoted,
+    )
     rows = ""
 
     for relationship in relationships:
@@ -2622,7 +2700,7 @@ def build_config_protection_preview(relationships, statuses):
         <td>{h(relationship.get("type", "-"))}</td>
         <td><span class="mono">{h(source_host)}</span> → <span class="mono">{h(target_host)}</span></td>
         <td><span class="mono">{h(dataset_text)}</span></td>
-        <td>{h(raw)}</td>
+        <td>{h(runtime_detail_result_text(raw, promoted))}</td>
       </tr>
 """
 
@@ -2630,12 +2708,12 @@ def build_config_protection_preview(relationships, statuses):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured Protection Relationships</h3>
       </div>
       <div class="configured-hosts-meta">{h(len(relationships))} relationships</div>
     </div>
-    <p class="muted-small">Protection relationships are config-driven preview data. They document backup or replication intent without changing the existing reference replication checks yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -2846,9 +2924,24 @@ def collect_config_truenas_snapshot_checks(hosts):
     return rows, errors
 
 
-def build_config_truenas_snapshot_preview(rows):
+def build_config_truenas_snapshot_preview(rows, promoted=False):
     if not rows:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Live snapshot-task and latest-snapshot checks are active "
+            "for enabled TrueNAS hosts with modules.snapshots set to "
+            "true. These preview results do not affect Overall Status "
+            "yet."
+        ),
+        (
+            "Live snapshot-task and latest-snapshot checks are active "
+            "for enabled TrueNAS hosts with modules.snapshots set to "
+            "true. These results contribute to public Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     host_count = len({
         row.get("host_id")
@@ -2890,7 +2983,7 @@ def build_config_truenas_snapshot_preview(rows):
         <td><span class="mono">{h(row.get("dataset", "-"))}</span></td>
         <td>{task_state_html}</td>
         <td>{latest_html}</td>
-        <td>{h(row.get("raw", "-"))}</td>
+        <td>{h(runtime_detail_result_text(row.get("raw", "-"), promoted))}</td>
       </tr>
 """
 
@@ -2898,12 +2991,12 @@ def build_config_truenas_snapshot_preview(rows):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured TrueNAS Snapshot Tasks</h3>
       </div>
       <div class="configured-hosts-meta">{h(host_count)} hosts · {h(task_count)} tasks</div>
     </div>
-    <p class="muted-small">Live snapshot-task and latest-snapshot checks are active for enabled TrueNAS hosts with modules.snapshots set to true. These preview results do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -3156,9 +3249,23 @@ def collect_config_truenas_replication_checks(hosts):
     return rows, errors
 
 
-def build_config_truenas_replication_preview(rows):
+def build_config_truenas_replication_preview(rows, promoted=False):
     if not rows:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Live replication-task checks are active for enabled "
+            "TrueNAS hosts with modules.replications set to true. "
+            "These preview results do not affect Overall Status yet."
+        ),
+        (
+            "Live replication-task checks are active for enabled "
+            "TrueNAS hosts with modules.replications set to true. "
+            "These results contribute to public Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     host_count = len({
         row.get("host_id")
@@ -3248,7 +3355,7 @@ def build_config_truenas_replication_preview(rows):
         <td>{task_and_state_html}</td>
         <td>{h(row.get("execution_time", "-"))}</td>
         <td><span class="mono">{h(last_snapshot)}</span></td>
-        <td>{h(row.get("raw", "-"))}</td>
+        <td>{h(runtime_detail_result_text(row.get("raw", "-"), promoted))}</td>
       </tr>
 """
 
@@ -3256,12 +3363,12 @@ def build_config_truenas_replication_preview(rows):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured TrueNAS Replication Tasks</h3>
       </div>
       <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(task_count)} {h(task_word)}</div>
     </div>
-    <p class="muted-small">Live replication-task checks are active for enabled TrueNAS hosts with modules.replications set to true. These preview results do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -3708,9 +3815,20 @@ def apply_config_image_update_overlay(services, statuses, update_rows):
     return overlaid_statuses, overlay_count
 
 
-def build_config_image_update_preview(rows):
+def build_config_image_update_preview(rows, promoted=False):
     if not rows:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Diun metrics and TrueNAS-native app update fields are "
+            "checked per configured source. Healthy configured Docker "
+            "and TrueNAS app services can be shown as UPDATE. Existing "
+            "unhealthy states take precedence, and update overlays do "
+            "not affect Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     source_count = len(rows)
     update_count = sum(
@@ -3753,7 +3871,7 @@ def build_config_image_update_preview(rows):
         <td>{h(row.get("tracked", 0))}</td>
         <td>{h(row.get("updates", 0))}</td>
         <td>{details_html}</td>
-        <td>{h(row.get("raw", "-"))}</td>
+        <td>{h(runtime_detail_result_text(row.get("raw", "-"), promoted))}</td>
       </tr>
 """
 
@@ -3761,12 +3879,12 @@ def build_config_image_update_preview(rows):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured Image Update Sources</h3>
       </div>
       <div class="configured-hosts-meta">{h(source_count)} {h(source_word)} · {h(update_count)} {h(update_word)}</div>
     </div>
-    <p class="muted-small">Diun metrics and TrueNAS-native app update fields are checked per configured source. Healthy configured Docker and TrueNAS app services can be shown as UPDATE. Existing unhealthy states take precedence, and update overlays do not affect Overall Status.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -3872,7 +3990,7 @@ def config_system_info_activity_value(status):
     return f"{running} / {total} running"
 
 
-def build_config_system_info_preview(hosts, statuses):
+def build_config_system_info_preview(hosts, statuses, promoted=False):
     configured_hosts = [
         host
         for host in hosts or []
@@ -3881,6 +3999,20 @@ def build_config_system_info_preview(hosts, statuses):
 
     if not configured_hosts:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Collector-local and eligible remote Linux or TrueNAS "
+            "system-information checks are active. These preview "
+            "results do not affect Overall Status yet."
+        ),
+        (
+            "Collector-local and eligible remote Linux or TrueNAS "
+            "system-information checks are active. These results "
+            "contribute to public Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     statuses = statuses or {}
     cards = ""
@@ -3952,7 +4084,7 @@ def build_config_system_info_preview(hosts, statuses):
             f'{info_item(activity_label, config_system_info_activity_value(status))}'
             '</div>'
             '<p class="muted-small">'
-            f'<strong>Result:</strong> {h(status.get("raw", "-"))}'
+            f'<strong>Result:</strong> {h(runtime_detail_result_text(status.get("raw", "-"), promoted))}'
             '</p>'
             '</div>'
         )
@@ -3961,12 +4093,12 @@ def build_config_system_info_preview(hosts, statuses):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured System Information</h3>
       </div>
       <div class="configured-hosts-meta">{h(checked_count)} checked · {h(not_checked_count)} not checked</div>
     </div>
-    <p class="muted-small">Collector-local and eligible remote Linux or TrueNAS system-information checks are active. These preview results do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <div class="system-info-row">
       {cards}
     </div>
@@ -4410,9 +4542,25 @@ def collect_config_truenas_pools(hosts):
     return rows, statuses, errors
 
 
-def build_config_truenas_pool_preview(hosts, rows, statuses):
+def build_config_truenas_pool_preview(hosts, rows, statuses, promoted=False):
     if not hosts:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Live pool inventory, capacity, and ZFS health checks are "
+            "active for eligible TrueNAS hosts with modules.pools set "
+            "to true. These preview results do not affect Overall "
+            "Status yet."
+        ),
+        (
+            "Live pool inventory, capacity, and ZFS health checks are "
+            "active for eligible TrueNAS hosts with modules.pools set "
+            "to true. These results contribute to public Overall "
+            "Status."
+        ),
+        promoted=promoted,
+    )
 
     statuses = statuses or {}
     rows_by_host = {}
@@ -4496,12 +4644,12 @@ def build_config_truenas_pool_preview(hosts, rows, statuses):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured TrueNAS Pools</h3>
       </div>
       <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(pool_count)} {h(pool_word)} · {h(checked_count)} checked · {h(not_checked_count)} not checked</div>
     </div>
-    <p class="muted-small">Live pool inventory, capacity, and ZFS health checks are active for eligible TrueNAS hosts with modules.pools set to true. These preview results do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Result</th>
@@ -5465,9 +5613,26 @@ def build_config_truenas_disk_health_preview(
     hosts,
     rows,
     statuses,
+    promoted=False,
 ):
     if not hosts:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Live pool temperature and SMART checks are active for "
+            "eligible TrueNAS hosts with modules.temperatures or "
+            "modules.smart enabled. These results affect the Storage "
+            "card but do not affect Overall Status yet."
+        ),
+        (
+            "Live pool temperature and SMART checks are active for "
+            "eligible TrueNAS hosts with modules.temperatures or "
+            "modules.smart enabled. These results affect the Storage "
+            "card and contribute to public Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     statuses = statuses or {}
     rows_by_host = {}
@@ -5514,7 +5679,7 @@ def build_config_truenas_disk_health_preview(
         <td>-</td>
         <td>-</td>
         <td>-</td>
-        <td>{h(status.get("raw", "-"))}</td>
+        <td>{h(runtime_detail_result_text(status.get("raw", "-"), promoted))}</td>
       </tr>
 """
             continue
@@ -5528,9 +5693,9 @@ def build_config_truenas_disk_health_preview(
         <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
         <td>{h(host_name)}</td>
         <td><strong>{h(row.get("pool_name", "-"))}</strong></td>
-        <td>{badge(temperature.get("label", "UNKNOWN"), temperature.get("css", "info"))}<br><span class="muted-small">{h(temperature.get("raw", "-"))}</span></td>
-        <td>{badge(smart.get("label", "UNKNOWN"), smart.get("css", "info"))}<br><span class="muted-small">{h(smart.get("raw", "-"))}</span></td>
-        <td>{h(row.get("raw", "-"))}</td>
+        <td>{badge(temperature.get("label", "UNKNOWN"), temperature.get("css", "info"))}<br><span class="muted-small">{h(runtime_detail_result_text(temperature.get("raw", "-"), promoted))}</span></td>
+        <td>{badge(smart.get("label", "UNKNOWN"), smart.get("css", "info"))}<br><span class="muted-small">{h(runtime_detail_result_text(smart.get("raw", "-"), promoted))}</span></td>
+        <td>{h(runtime_detail_result_text(row.get("raw", "-"), promoted))}</td>
       </tr>
 """
 
@@ -5543,12 +5708,12 @@ def build_config_truenas_disk_health_preview(
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured TrueNAS Disk Health</h3>
       </div>
       <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(pool_count)} {h(pool_word)} · {h(checked_count)} checked · {h(not_checked_count)} not checked</div>
     </div>
-    <p class="muted-small">Live pool temperature and SMART checks are active for eligible TrueNAS hosts with modules.temperatures or modules.smart enabled. These results affect the Storage card but do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Result</th>
@@ -5564,9 +5729,21 @@ def build_config_truenas_disk_health_preview(
 """
 
 
-def build_configured_hosts_preview(hosts, web_statuses=None):
+def build_configured_hosts_preview(hosts, web_statuses=None, promoted=False):
     if not hosts:
         return ""
+
+    kicker, description = runtime_detail_presentation(
+        (
+            "Read from config.yaml. Web UI checks are preview-only and "
+            "do not affect Overall Status yet."
+        ),
+        (
+            "Configured hosts and Web UI checks contribute to public "
+            "Overall Status."
+        ),
+        promoted=promoted,
+    )
 
     web_statuses = web_statuses or {}
     rows = ""
@@ -5622,12 +5799,12 @@ def build_configured_hosts_preview(hosts, web_statuses=None):
   <div class="configured-hosts-preview">
     <div class="configured-hosts-preview-header">
       <div>
-        <div class="configured-hosts-kicker">Config Preview</div>
+        <div class="configured-hosts-kicker">{h(kicker)}</div>
         <h3>Configured Hosts</h3>
       </div>
       <div class="configured-hosts-meta">{h(enabled_count)} enabled · {h(disabled_count)} disabled</div>
     </div>
-    <p class="muted-small">Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.</p>
+    <p class="muted-small">{h(description)}</p>
     <table>
       <tr>
         <th>Status</th>
@@ -5776,7 +5953,7 @@ def classify_collector_error(value):
     return {"label": "OTHER", "css": "info"}
 
 
-def public_overall_status_severity(status):
+def public_status_severity(status):
     status = status or {}
     css = str(status.get("css") or "").strip().lower()
     label = str(status.get("label") or "").strip().upper()
@@ -5851,7 +6028,7 @@ def build_public_overall_status(
     for result in domain_results or []:
         result = result or {}
         status = result.get("status") or result
-        severity = public_overall_status_severity(status)
+        severity = public_status_severity(status)
 
         note = str(result.get("note") or "").strip()
 
@@ -6646,6 +6823,7 @@ def build_public_systems_summary_card(
         )
 
     ok_count = 0
+    warning_count = 0
     down_count = 0
     info_count = 0
     details = ""
@@ -6667,16 +6845,23 @@ def build_public_systems_summary_card(
         label = status.get("label", "UNKNOWN")
         css = status.get("css", "info")
 
-        if label == "OK":
+        severity = public_status_severity(status)
+
+        if severity == 0:
             ok_count += 1
-        elif css == "bad":
+        elif severity == 3:
             down_count += 1
+        elif severity == 2:
+            warning_count += 1
         else:
             info_count += 1
 
         details += build_public_summary_detail(display_name, label, css)
 
     value = f"{len(enabled_hosts)} Systems · {ok_count} OK · {down_count} DOWN"
+
+    if warning_count:
+        value += f" · {warning_count} WARNING"
 
     if info_count:
         value += f" · {info_count} INFO"
@@ -6685,7 +6870,7 @@ def build_public_systems_summary_card(
         "Systems",
         value,
         details,
-        public_card_css(down_count, 0, info_count),
+        public_card_css(down_count, warning_count, info_count),
         "two-column" if len(enabled_hosts) > 6 else "",
     )
 
@@ -7218,51 +7403,6 @@ def build_public_four_card_summary_preview(
   </div>
 </div>
 """
-
-
-def promote_public_runtime_detail_html(value):
-    replacements = (
-        (
-            '<div class="configured-hosts-kicker">Config Preview</div>',
-            '<div class="configured-hosts-kicker">Runtime Detail</div>',
-        ),
-        (
-            "Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.",
-            "Configured hosts and Web UI checks contribute to public Overall Status.",
-        ),
-        (
-            "These preview results do not affect Overall Status yet.",
-            "These results contribute to public Overall Status.",
-        ),
-        (
-            "These results affect the Storage card but do not affect Overall Status yet.",
-            "These results affect the Storage card and contribute to public Overall Status.",
-        ),
-        (
-            "Protection relationships are config-driven preview data. "
-            "They document backup or replication intent without changing "
-            "the existing reference replication checks yet.",
-            "Protection relationships document backup or replication intent "
-            "and include available live status overlays.",
-        ),
-        (
-            " protection relationships are preview-only for now",
-            " protection relationships are not actively checked yet",
-        ),
-        (
-            "replication preview ·",
-            "replication intent ·",
-        ),
-        (
-            "checks are not active in the public preview yet",
-            "checks are not active in the public runtime yet",
-        ),
-    )
-
-    for old, new in replacements:
-        value = value.replace(old, new)
-
-    return value
 
 
 def h(value):
@@ -8512,6 +8652,8 @@ REMOTE_PY"""
       </div>
     """
 
+runtime_detail_promoted = DASHBOARD_RUNTIME_MODE == "public"
+
 configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
 
 config_system_info_hosts = normalize_config_system_info_hosts(
@@ -8529,11 +8671,13 @@ for error in config_system_info_errors:
 config_system_info_preview_html = build_config_system_info_preview(
     CONFIG_HOSTS,
     config_system_info_statuses,
+    promoted=runtime_detail_promoted,
 )
 
 configured_hosts_preview_html = build_configured_hosts_preview(
     CONFIG_HOSTS,
     configured_host_web_statuses,
+    promoted=runtime_detail_promoted,
 )
 
 eligible_system_info_hosts = [
@@ -8569,6 +8713,7 @@ config_truenas_pool_preview_html = (
         config_truenas_pool_hosts,
         config_truenas_pool_rows,
         config_truenas_pool_statuses,
+        promoted=runtime_detail_promoted,
     )
 )
 
@@ -8611,6 +8756,7 @@ config_truenas_disk_health_preview_html = (
         config_truenas_disk_health_hosts,
         config_truenas_disk_health_rows,
         config_truenas_disk_health_statuses,
+        promoted=runtime_detail_promoted,
     )
 )
 
@@ -8640,6 +8786,7 @@ for error in config_truenas_snapshot_errors:
 
 config_truenas_snapshot_preview_html = build_config_truenas_snapshot_preview(
     config_truenas_snapshot_rows,
+    promoted=runtime_detail_promoted,
 )
 
 if config_truenas_snapshot_hosts:
@@ -8665,6 +8812,7 @@ for error in config_truenas_replication_errors:
 config_truenas_replication_preview_html = (
     build_config_truenas_replication_preview(
         config_truenas_replication_rows,
+        promoted=runtime_detail_promoted,
     )
 )
 
@@ -8695,6 +8843,7 @@ for error in config_image_update_errors:
 
 config_image_update_preview_html = build_config_image_update_preview(
     config_image_update_rows,
+    promoted=runtime_detail_promoted,
 )
 
 if config_image_update_sources:
@@ -8715,6 +8864,7 @@ config_local_storage_statuses = collect_config_local_storage_checks(config_local
 config_local_storage_preview_html = build_config_local_storage_preview(
     config_local_storage_checks,
     config_local_storage_statuses,
+    promoted=runtime_detail_promoted,
 )
 
 config_backup_checks = normalize_config_backup_checks(
@@ -8725,6 +8875,7 @@ config_backup_statuses = collect_config_backup_checks(config_backup_checks)
 config_backup_preview_html = build_config_backup_preview(
     config_backup_checks,
     config_backup_statuses,
+    promoted=runtime_detail_promoted,
 )
 
 config_protection_relationships = normalize_config_protection_relationships(CONFIG_ENABLED_PROTECTION)
@@ -8744,6 +8895,7 @@ config_protection_statuses = apply_config_protection_snapshot_overlay(
 config_protection_preview_html = build_config_protection_preview(
     config_protection_relationships,
     config_protection_statuses,
+    promoted=runtime_detail_promoted,
 )
 
 
@@ -9063,47 +9215,7 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     replication_rows=config_truenas_replication_rows,
 )
 
-if DASHBOARD_RUNTIME_MODE == "public":
-    configured_hosts_preview_html = promote_public_runtime_detail_html(
-        configured_hosts_preview_html
-    )
-    config_system_info_preview_html = (
-        promote_public_runtime_detail_html(
-            config_system_info_preview_html
-        )
-    )
-    config_truenas_pool_preview_html = (
-        promote_public_runtime_detail_html(
-            config_truenas_pool_preview_html
-        )
-    )
-    config_truenas_disk_health_preview_html = (
-        promote_public_runtime_detail_html(
-            config_truenas_disk_health_preview_html
-        )
-    )
-    config_truenas_snapshot_preview_html = (
-        promote_public_runtime_detail_html(
-            config_truenas_snapshot_preview_html
-        )
-    )
-    config_truenas_replication_preview_html = (
-        promote_public_runtime_detail_html(
-            config_truenas_replication_preview_html
-        )
-    )
-    config_image_update_preview_html = promote_public_runtime_detail_html(
-        config_image_update_preview_html
-    )
-    config_protection_preview_html = promote_public_runtime_detail_html(
-        config_protection_preview_html
-    )
-    config_local_storage_preview_html = promote_public_runtime_detail_html(
-        config_local_storage_preview_html
-    )
-    config_backup_preview_html = promote_public_runtime_detail_html(
-        config_backup_preview_html
-    )
+if runtime_detail_promoted:
     details_section_heading = "Details"
     systems_layout_container_html = ""
 else:
