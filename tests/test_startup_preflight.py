@@ -359,6 +359,110 @@ class StartupPreflightTests(unittest.TestCase):
         self.assertEqual(requirements, {})
         self.assertEqual(errors, [])
 
+    def test_collector_system_info_does_not_require_ssh(self):
+        config = self.minimal_config()
+        config["hosts"][0]["modules"]["system_info"] = True
+
+        requirements = PREFLIGHT.collect_ssh_requirements(
+            config
+        )
+
+        self.assertEqual(requirements, {})
+
+    def test_remote_system_info_modules_require_ssh(self):
+        config = self.minimal_config()
+        config["hosts"].extend(
+            [
+                {
+                    "id": "remote-linux",
+                    "enabled": True,
+                    "display_name": "Remote Linux",
+                    "hostname": "remote-linux",
+                    "address": "192.0.2.20",
+                    "type": "linux",
+                    "modules": {
+                        "system_info": True,
+                    },
+                },
+                {
+                    "id": "remote-truenas",
+                    "enabled": True,
+                    "display_name": "Remote TrueNAS",
+                    "hostname": "remote-truenas",
+                    "address": "192.0.2.30",
+                    "type": "truenas",
+                    "modules": {
+                        "system_info": True,
+                    },
+                },
+                {
+                    "id": "module-disabled",
+                    "enabled": True,
+                    "display_name": "Module Disabled",
+                    "hostname": "module-disabled",
+                    "address": "192.0.2.40",
+                    "type": "linux",
+                    "modules": {
+                        "system_info": False,
+                    },
+                },
+            ]
+        )
+
+        requirements = PREFLIGHT.collect_ssh_requirements(
+            config
+        )
+
+        self.assertEqual(
+            requirements["remote-linux"],
+            ["remote Linux system information"],
+        )
+        self.assertEqual(
+            requirements["remote-truenas"],
+            ["TrueNAS system information"],
+        )
+        self.assertNotIn(
+            "module-disabled",
+            requirements,
+        )
+
+    def test_remote_system_info_without_ssh_fails_clearly(self):
+        config = self.minimal_config()
+        config["hosts"].append(
+            {
+                "id": "remote-linux",
+                "enabled": True,
+                "display_name": "Remote Linux",
+                "hostname": "remote-linux",
+                "address": "192.0.2.20",
+                "type": "linux",
+                "modules": {
+                    "system_info": True,
+                },
+            }
+        )
+
+        runtime = self.make_runtime(config)
+        temporary, config_path, output_path, log_path = runtime
+        self.addCleanup(temporary.cleanup)
+
+        requirements, errors = PREFLIGHT.run_preflight(
+            config_path,
+            output_path,
+            log_path,
+        )
+
+        self.assertEqual(
+            requirements["remote-linux"],
+            ["remote Linux system information"],
+        )
+        self.assertIn(
+            "host 'Remote Linux' requires SSH for "
+            "remote Linux system information, "
+            "but its ssh section is missing or disabled",
+            errors,
+        )
+
     def test_cli_returns_nonzero_for_missing_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

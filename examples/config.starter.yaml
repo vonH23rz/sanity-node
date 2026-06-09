@@ -35,6 +35,7 @@ hosts:
     type: linux
 
     modules:
+      # Safe collector-local telemetry; no SSH credentials are required.
       system_info: true
       local_storage: false
       docker: false

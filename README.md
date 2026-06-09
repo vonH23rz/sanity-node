@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **187 deterministic standard-library regression tests**
+- **202 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 now isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Migration parity and additional monitoring families remain Phase 3 work.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 now adds configuration-driven collector-local, remote Linux, and remote TrueNAS system information without changing the reference runtime.
 
 ---
 
@@ -246,6 +246,10 @@ The goal is that users should be able to describe their own homelab without edit
 Completed Phase 2F configuration-driven behavior:
 
 - configured hosts appear in the Systems summary card and the Configured Hosts detail table
+- enabled hosts with `modules.system_info: true` can report hostname, OS, kernel, uptime, CPU, memory, load, and host-type-aware Apps or Containers activity
+- collector-local system information requires no SSH credentials
+- eligible remote Linux and TrueNAS system-information checks use each host's explicit SSH identity
+- system-information reachability can improve the Systems summary card without changing global Overall Status
 - host Web UI links can show reachability badges
 - a confirmed TrueNAS SSH/network timeout marks the configured host as `Host unreachable` instead of listing every affected service separately
 - confirmed TrueNAS host unreachability also overrides the host's Web UI result in the Systems summary card
@@ -278,6 +282,24 @@ Completed Phase 2F configuration-driven behavior:
 - live snapshot and replication overlays affect only the configured Protection detail and summary card; they do not affect Overall Status
 - `dashboard.runtime_mode: public` suppresses the hardcoded five-card reference summary, personal systems layout, and personal collectors
 - `dashboard.runtime_mode: reference` preserves the original reference checks, summary cards, and systems layout
+
+### Config-driven host system information
+
+Enable generic host telemetry with:
+
+```yaml
+modules:
+  system_info: true
+```
+
+For the configured collector host, Sanity Node reads hostname, OS, kernel, uptime, CPU, memory, load, and optional Docker activity locally. The collector does not require an address or SSH credentials.
+
+Enabled remote Linux and TrueNAS hosts require a non-empty `address`, `ssh.enabled: true`, and non-empty `ssh.user` and `ssh.key_file`. Remote Linux hosts can include Docker running/total counts when `modules.docker: true`. Remote TrueNAS hosts additionally attempt `midclt call app.query` and show running/total application counts.
+
+Hosts with the module disabled remain `NOT CHECKED` and are not contacted. Recognized network and timeout failures report `UNREACHABLE`; authentication, host-key, command, and malformed-payload failures report `UNKNOWN`. A valid partial payload remains reachable and unavailable fields display as `-`.
+
+The public Runtime Detail renders generic system-information cards. The Systems summary can use system-information health alongside existing Web UI and service-derived host state. These results do not yet contribute to global Overall Status; unified severity remains Phase 3C.6.
+
 
 ### Remote Linux Docker checks
 
@@ -506,6 +528,8 @@ The validator checks:
 - required dashboard and collector settings
 - supported `dashboard.runtime_mode` values
 - host IDs, host types, and duplicate hosts
+- operational host-module values
+- remote `modules.system_info: true` address and explicit SSH requirements
 - enabled references to known hosts
 - service types, check types, URLs, containers, and TrueNAS app IDs
 - local storage warning and critical thresholds
@@ -537,9 +561,10 @@ config/config.yaml
 
 The generated configuration comes from
 `examples/config.starter.yaml`. It selects `dashboard.runtime_mode: public`,
-contains one enabled collector host, requires no SSH credentials, enables no
-placeholder remote systems, and keeps all optional services, storage checks,
-backup checks, protection relationships, and image-update sources disabled.
+contains one enabled collector host, enables collector-local system
+information without requiring SSH credentials, enables no placeholder remote
+systems, and keeps all optional services, storage checks, backup checks,
+protection relationships, and image-update sources disabled.
 
 `examples/config.example.yaml` remains the full configuration reference.
 It is not the recommended file to copy unchanged for a first start because
@@ -579,6 +604,7 @@ The startup preflight checks:
 - that the configuration file exists, is readable, and contains a YAML mapping
 - that the dashboard-output and generator-log directories exist and are writable
 - that SSH users and key files exist for enabled checks that actually require SSH
+- that remote Linux and TrueNAS `system_info` hosts fail closed without explicit usable SSH credentials
 - that disabled modules and collector-local checks do not incorrectly require SSH credentials
 
 Run it manually with:
@@ -622,6 +648,7 @@ python3 -m unittest discover -s tests -v
 The current tests protect:
 
 - Docker image-reference normalization and Docker Hub aliases
+- collector-local, remote Linux, and remote TrueNAS system-information eligibility, module gating, host-specific SSH collection, partial payloads, optional activity counts, malformed payloads, conservative reachability classification, generic rendering, and Systems-summary precedence
 - remote Linux Docker eligibility, host-specific SSH commands, transport failures, shell-safe container names, state/image parsing, missing containers, malformed responses, and stderr banner isolation
 - remote Linux local-storage eligibility, collector-local preservation, host-specific SSH commands, shell-safe mountpoints, threshold classification, missing mounts, transport failures, malformed output, and ineligible-host fallback
 - remote Linux backup eligibility, collector-local preservation, shell-safe marker/timer commands, marker freshness, inactive timers, missing markers, transport/stat failures, malformed responses, and ineligible-host fallback
@@ -737,6 +764,12 @@ Completed Phase 3B runtime and presentation work includes:
 
 Phase 3C.1 completed the read-only migration parity audit.
 
+Phase 3C.2 completed configuration-driven host system-information parity.
+`modules.system_info` is now an operational collector gate for the local
+collector, eligible remote Linux hosts, and eligible remote TrueNAS hosts.
+The public Systems summary and Runtime Detail consume the new telemetry while
+global Overall Status remains unchanged.
+
 See:
 
     docs/phase3c-migration-parity-audit.md
@@ -758,6 +791,7 @@ The principal remaining parity gaps are:
 The validated remaining Phase 3C sequence is:
 
     Phase 3C.2  Config-driven host system information parity
+                 COMPLETE
     Phase 3C.3  Config-driven TrueNAS pool capacity and health parity
     Phase 3C.4  Config-driven TrueNAS temperature and SMART parity
     Phase 3C.5  Data-protection severity parity

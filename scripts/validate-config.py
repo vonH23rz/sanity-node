@@ -330,6 +330,46 @@ def validate_config(config: dict) -> Validator:
                                 "must be true or false",
                             )
 
+            system_info_enabled = (
+                isinstance(modules, dict)
+                and modules.get("system_info") is True
+            )
+            is_collector_host = (
+                host_id is not None
+                and host_id in {
+                    collector_id,
+                    "collector",
+                }
+            )
+
+            if (
+                enabled
+                and system_info_enabled
+                and not is_collector_host
+                and host_type is not None
+                and host_type.lower() in SUPPORTED_HOST_TYPES
+            ):
+                if host_type.lower() == "linux":
+                    validator.validate_non_empty_string(
+                        host.get("address"),
+                        f"{path}.address",
+                    )
+
+                ssh_value = host.get("ssh")
+
+                if not isinstance(ssh_value, dict):
+                    validator.error(
+                        f"{path}.ssh",
+                        "is required when modules.system_info is true "
+                        "for a remote host",
+                    )
+                elif ssh_value.get("enabled") is not True:
+                    validator.error(
+                        f"{path}.ssh.enabled",
+                        "must be true when modules.system_info is true "
+                        "for a remote host",
+                    )
+
         if not enabled_host_ids:
             validator.error("hosts", "must contain at least one enabled host")
 

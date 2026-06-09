@@ -95,6 +95,16 @@ def collect_ssh_requirements(config):
         host_type = str(host.get("type") or "").strip().lower()
         modules = mapping(host.get("modules"))
 
+        if (
+            host_id not in {collector_id, "collector"}
+            and host_type in {"linux", "truenas"}
+            and modules.get("system_info") is True
+        ):
+            if host_type == "truenas":
+                add(host_id, "TrueNAS system information")
+            else:
+                add(host_id, "remote Linux system information")
+
         if host_type == "truenas":
             if modules.get("snapshots") is True:
                 add(host_id, "TrueNAS snapshot monitoring")

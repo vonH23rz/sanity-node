@@ -178,6 +178,90 @@ class RuntimeModeValidationTests(unittest.TestCase):
         self.assertIn("dashboard.runtime_mode", output)
         self.assertIn("non-empty string", output)
 
+    def test_remote_linux_system_info_requires_address_and_ssh(self):
+        result = self.validate(
+            """
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: remote
+    enabled: true
+    display_name: Remote Linux
+    hostname: remote
+    type: linux
+    modules:
+      system_info: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("hosts[1].address", output)
+        self.assertIn("hosts[1].ssh", output)
+
+    def test_remote_system_info_requires_explicit_ssh_enablement(self):
+        result = self.validate(
+            """
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: nas
+    enabled: true
+    display_name: NAS
+    hostname: nas
+    address: 192.0.2.20
+    type: truenas
+    ssh:
+      user: monitor
+      key_file: /tmp/key
+    modules:
+      system_info: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("hosts[1].ssh.enabled", output)
+        self.assertIn("must be true", output)
+
 
 class RuntimeModeFullRenderTests(unittest.TestCase):
     def render_starter(self, runtime_mode):
@@ -301,6 +385,18 @@ exit 97
         )
         self.assertIn(
             "Runtime Detail",
+            rendered,
+        )
+        self.assertIn(
+            "Configured System Information",
+            rendered,
+        )
+        self.assertIn(
+            "collector-local system information collected",
+            rendered,
+        )
+        self.assertIn(
+            "1 Systems · 1 OK · 0 DOWN",
             rendered,
         )
         self.assertNotIn(
