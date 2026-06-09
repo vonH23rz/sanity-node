@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, and Phase 3C.4 adds configuration-driven TrueNAS temperature and SMART health without changing the reference runtime.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, Phase 3C.4 added configuration-driven TrueNAS temperature and SMART health, Phase 3C.5 normalized data-protection severity, and Phase 3C.6 now derives public Overall Status from Systems, Storage, Protection, Services, and classified collector errors without changing the reference runtime.
 
 ---
 
@@ -252,7 +252,7 @@ Completed configuration-driven behavior:
 - enabled TrueNAS hosts with `modules.smart: true` can report conservative per-device SMART health summarized by pool
 - collector-local system information requires no SSH credentials
 - eligible remote Linux and TrueNAS system-information checks use each host's explicit SSH identity
-- system-information reachability can improve the Systems summary card without changing global Overall Status
+- system-information reachability contributes to the Systems summary card and public Overall Status
 - host Web UI links can show reachability badges
 - a confirmed TrueNAS SSH/network timeout marks the configured host as `Host unreachable` instead of listing every affected service separately
 - confirmed TrueNAS host unreachability also overrides the host's Web UI result in the Systems summary card
@@ -267,7 +267,7 @@ Completed configuration-driven behavior:
 - configured local storage checks can report collector-local or eligible remote Linux filesystem usage using `df`
 - configured backup checks can report collector-local or eligible remote Linux marker-file freshness and optional systemd timer state
 - Collector Errors include a classified Type badge for timeouts, network failures, host-key problems, authentication failures, refused connections, parsing failures, command failures, unknown messages, and other errors
-- all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
+- all Collector Errors remain failure rows; in public mode uncovered collector errors contribute to Overall Status, while errors already represented by a domain result are deduplicated
 - the Protection summary card aggregates configured backup checks, live snapshot-task rows, live replication-task rows, and configured protection relationships
 - protection results use one public severity contract: `CRITICAL` overrides `WARNING`, which overrides `INFO`, which overrides `OK`
 - missing backup markers and missing snapshots are critical; stale backups, inactive timers, stale snapshots, paused tasks, and disabled protection tasks are warnings
@@ -287,7 +287,7 @@ Completed configuration-driven behavior:
 - remote local storage checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - TrueNAS app checks on non-TrueNAS hosts are shown as `NOT CHECKED` for now
-- live snapshot and replication overlays affect only the configured Protection detail and summary card; they do not affect Overall Status
+- live snapshot and replication overlays affect the configured Protection detail, summary card, and public Overall Status while leaving reference mode unchanged
 - `dashboard.runtime_mode: public` suppresses the hardcoded five-card reference summary, personal systems layout, and personal collectors
 - `dashboard.runtime_mode: reference` preserves the original reference checks, summary cards, and systems layout
 
@@ -306,7 +306,7 @@ Enabled remote Linux and TrueNAS hosts require a non-empty `address`, `ssh.enabl
 
 Hosts with the module disabled remain `NOT CHECKED` and are not contacted. Recognized network and timeout failures report `UNREACHABLE`; authentication, host-key, command, and malformed-payload failures report `UNKNOWN`. A valid partial payload remains reachable and unavailable fields display as `-`.
 
-The public Runtime Detail renders generic system-information cards. The Systems summary can use system-information health alongside existing Web UI and service-derived host state. These results do not yet contribute to global Overall Status; unified severity remains Phase 3C.6.
+The public Runtime Detail renders generic system-information cards. The Systems summary and unified public Overall Status use system-information health alongside existing Web UI and service-derived host state. Reference mode retains its original behavior.
 
 
 ### Remote Linux Docker checks
@@ -325,7 +325,7 @@ The service must use `check: docker` and define its container name. Container na
 
 Running containers report `UP`; containers not found after a successful SSH connection report `MISSING`; SSH transport failures and malformed Docker responses report `UNKNOWN`. Ineligible hosts are not contacted, and their Docker services remain `NOT CHECKED`.
 
-Remote Docker checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded service cards.
+Remote Docker checks contribute through configuration-driven service status to public Overall Status. They do not modify the original hardcoded reference service cards.
 
 ### Remote Linux local-storage checks
 
@@ -343,7 +343,7 @@ Each storage check must reference that host and define its mountpoint. Mountpoin
 
 Filesystem usage below the warning threshold reports `OK`; warning and critical thresholds report `WARNING` and `CRITICAL`. A missing mount after a successful SSH connection reports `MISSING`. SSH transport failures and malformed `df` output report `UNKNOWN`. Ineligible remote checks remain `NOT CHECKED`.
 
-Remote local-storage checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded storage checks.
+Remote local-storage checks contribute through the Storage domain to public Overall Status. They do not modify the original hardcoded reference storage checks.
 
 ### Remote Linux backup checks
 
@@ -361,7 +361,7 @@ The remote command verifies that the marker exists, reads its epoch modification
 
 Fresh markers report `OK`; stale markers report `OLD`; inactive timers report `WARNING`; missing markers report `MISSING`. SSH transport failures, marker-stat failures, and malformed responses report `UNKNOWN`. Ineligible remote checks remain `NOT CHECKED`.
 
-Remote backup checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded backup checks.
+Remote backup checks contribute through the Protection domain to public Overall Status. They do not modify the original hardcoded reference backup checks.
 
 ### TrueNAS pool capacity and health checks
 
@@ -410,9 +410,8 @@ remain `NOT CHECKED` and are not contacted.
 
 Pool rows appear in the public Storage summary and in the
 Configured TrueNAS Pools Runtime Detail table. Pool severity
-affects the Storage card, but it does not yet contribute to
-global Overall Status. Unified severity remains assigned to
-Phase 3C.6.
+affects the Storage card and contributes to public Overall
+Status. The reference runtime remains unchanged.
 
 ### TrueNAS temperature and SMART checks
 
@@ -469,8 +468,8 @@ uses worst-severity precedence:
 
 Disk-health rows appear in the public Storage summary and in the
 Configured TrueNAS Disk Health Runtime Detail table. These results
-affect the Storage card but do not yet contribute to global Overall
-Status. Unified severity remains assigned to Phase 3C.6.
+affect the Storage card and contribute to public Overall Status.
+The reference runtime remains unchanged.
 
 ### TrueNAS snapshot checks
 
@@ -502,7 +501,7 @@ Configured replication relationships can use these live snapshot rows as a preco
 
 Snapshot rows now contribute directly to the public Protection summary card. Fresh tasks are `OK`; old or disabled tasks and collection uncertainty are `WARNING`; enabled tasks without a snapshot are `CRITICAL`. Relationship overlays continue to require confident dataset coverage.
 
-Snapshot and Protection-card results do not affect global Overall Status, and the original hardcoded snapshot cards remain untouched.
+Snapshot and Protection-card results contribute to public Overall Status. The original hardcoded reference snapshot cards remain untouched.
 
 ### TrueNAS replication checks
 
@@ -530,7 +529,7 @@ For each matching host, Sanity Node:
 
 The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials.
 
-Replication rows now contribute directly to the public Protection summary card. Successful tasks are `OK`; active tasks remain informational; paused, disabled, unknown, or malformed states are warnings; failed, errored, or aborted tasks are critical. These results do not affect global Overall Status, and the original hardcoded replication table remains untouched.
+Replication rows now contribute directly to the public Protection summary card and public Overall Status. Successful tasks are `OK`; active tasks remain informational; paused, disabled, unknown, or malformed states are warnings; failed, errored, or aborted tasks are critical. The original hardcoded reference replication table remains untouched.
 
 Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configured status.
 
@@ -572,7 +571,7 @@ Image-update results can overlay healthy configuration-driven services:
 - existing `DOWN`, `MISSING`, `UNKNOWN`, and `NOT CHECKED` states always take precedence
 - the Services summary counts `UPDATE` separately from `UP`, `DOWN`, and other informational states
 
-Update overlays remain informational. They do not affect Overall Status, and they do not modify the original hardcoded service cards.
+Update overlays remain informational. They can produce public Overall Status `INFO`, but they do not produce `WARNING` or `NOK` by themselves and do not modify the original hardcoded reference service cards.
 
 ### `dashboard.runtime_mode`
 
@@ -594,10 +593,46 @@ In `public` mode:
 
 - hardcoded personal host, pool, snapshot, replication, and service collectors are skipped
 - hardcoded reference summary cards and system rows are not rendered
-- Overall Status and collector errors originate only from configuration-driven runtime checks
+- Overall Status is derived from configuration-driven Systems, Storage, Protection, and Services results plus classified collector errors
+- severity precedence is deterministic: `NOK` overrides `WARNING`, which overrides `INFO`, which overrides `OK`
+- the first issue at the highest active severity becomes the displayed Overall Status note
+- collector errors already represented by a domain result are deduplicated, while uncovered collector failures still contribute
 - personal reference hostnames, addresses, and service names are not emitted into the dashboard
 
 Both example configurations explicitly select `public`.
+
+### Unified public Overall Status
+
+Public mode evaluates configuration-driven results in deterministic
+domain order:
+
+    Systems
+    Storage
+    Protection
+    Services
+    Uncovered collector errors
+
+The highest active severity determines the global result:
+
+    NOK > WARNING > INFO > OK
+
+Critical domain results produce `NOK`. Warning and disabled results
+produce `WARNING`. Uncertain, active, update, and other informational
+results produce `INFO`. Healthy results produce `OK`.
+
+Collector errors are classified separately. Network, timeout, and
+refused-connection failures are critical. Authentication, host-key,
+parsing, command, unknown, and other collector failures are
+warning-grade. Image-update collector failures remain warning-grade.
+
+When a collector error is already represented by a domain result,
+Sanity Node elevates that result when necessary instead of adding a
+duplicate issue. Placeholder raw values such as `-`, `N/A`, `none`,
+and `unknown` never consume a collector error.
+
+The first issue at the highest active severity becomes the displayed
+Overall Status note. Reference mode retains its original Overall
+Status behavior.
 
 ### `summary_cards`
 
@@ -629,7 +664,7 @@ The Protection card aggregates every enabled protection domain rather than refle
 
 Confidently matched live replication tasks and complete snapshot coverage can still replace a relationship's `CONFIGURED` state with current live status. Every configured dataset must be covered before snapshot status propagates. When snapshot and replication overlays both match, the worst severity wins. A live `OK` relationship counts as healthy.
 
-These propagations are preview-only and do not affect Overall Status or the original hardcoded summary cards.
+These propagations contribute to public Overall Status and do not affect the original hardcoded reference summary cards.
 
 ### Configuration validation
 
@@ -890,8 +925,8 @@ Phase 3C.1 completed the read-only migration parity audit.
 Phase 3C.2 completed configuration-driven host system-information parity.
 `modules.system_info` is now an operational collector gate for the local
 collector, eligible remote Linux hosts, and eligible remote TrueNAS hosts.
-The public Systems summary and Runtime Detail consume the new telemetry while
-global Overall Status remains unchanged.
+The public Systems summary and Runtime Detail consume the telemetry, and
+Phase 3C.6 now includes its health state in unified public Overall Status.
 
 See:
 
@@ -902,14 +937,13 @@ TrueNAS application checks, snapshots, replications, backups,
 protection, and image updates are already substantially
 configuration-driven.
 
-The principal remaining parity gaps are:
+Phase 3C.2 through Phase 3C.6 closed the collector and
+unified-severity gaps identified by the audit. The remaining work is:
 
-- config-driven host system information
-- TrueNAS pool inventory, capacity, and ZFS health
-- disk temperature and SMART health
-- unified public Overall Status behavior
-- deterministic collector-error severity
-- production migration and cutover rehearsal
+- public schema and presentation consolidation
+- production configuration migration rehearsal
+- public-mode production cutover rehearsal
+- reference retirement decision
 
 The validated Phase 3C sequence is:
 
@@ -922,6 +956,7 @@ The validated Phase 3C sequence is:
     Phase 3C.5  Data-protection severity parity
                  COMPLETE
     Phase 3C.6  Unified Overall Status and collector-error parity
+                 COMPLETE
     Phase 3C.7  Public schema and presentation consolidation
     Phase 3C.8  Production configuration migration rehearsal
     Phase 3C.9  Public-mode production cutover rehearsal

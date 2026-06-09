@@ -97,56 +97,62 @@ Those two flags require later clarification, deprecation, or removal.
 | Capability | Public state | Parity | Required work |
 |---|---|---:|---|
 | Host inventory | Configuration-driven | Partial | Move production inventory entirely into configuration |
-| Host Web UI reachability | Implemented | Partial | Define global severity behavior |
+| Host Web UI reachability | Implemented | Supported | Integrated into the Systems domain in Phase 3C.6 |
 | Hostname, OS, kernel, uptime, CPU, memory, load | Implemented | Supported | Completed in Phase 3C.2 |
 | Collector-local system information | Implemented | Supported | Local telemetry requires no SSH |
 | Remote Linux and TrueNAS system information | Implemented | Supported | Host-aware SSH telemetry with conservative failure handling |
-| TrueNAS pool inventory | Reference-only | Missing | Operationalize `modules.pools` |
-| Pool size and capacity | Reference-only | Missing | Add generic capacity collection |
-| ZFS pool health | Reference-only | Missing | Add health status and severity |
+| TrueNAS pool inventory | Implemented | Supported | Completed in Phase 3C.3 |
+| Pool size and capacity | Implemented | Supported | Completed in Phase 3C.3 |
+| ZFS pool health | Implemented | Supported | Completed in Phase 3C.3 |
 | Pool temperatures | Implemented | Supported | Completed in Phase 3C.4 |
 | SMART health | Implemented | Supported | Completed in Phase 3C.4 |
-| Local and remote filesystem capacity | Implemented | Supported | Connect to unified severity |
-| Backup marker and timer checks | Implemented | Partial | Connect to unified severity |
-| Snapshot task and freshness checks | Implemented | Partial | Connect to unified severity |
-| Replication task checks | Implemented | Partial | Connect to unified severity |
-| Protection overlays | Implemented | Partial | Define final severity behavior |
+| Local and remote filesystem capacity | Implemented | Supported | Unified in Phase 3C.6 |
+| Backup marker and timer checks | Implemented | Supported | Unified in Phase 3C.6 |
+| Snapshot task and freshness checks | Implemented | Supported | Unified in Phase 3C.6 |
+| Replication task checks | Implemented | Supported | Unified in Phase 3C.6 |
+| Protection overlays | Implemented | Supported | Severity normalized in Phase 3C.5 and unified in Phase 3C.6 |
 | Collector-local Docker services | Implemented | Supported | No new collector required |
 | Remote Linux Docker services | Implemented | Supported | No new collector required |
 | TrueNAS application services | Implemented | Supported | No new collector required |
-| HTTP and manual services | Implemented | Supported | Move personal services into config |
+| HTTP and manual services | Implemented | Supported | Populate through config |
 | Service links and app/helper types | Implemented | Supported | Populate through config |
-| Image-update monitoring | Implemented | Supported | Keep `UPDATE` informational |
-| TrueNAS host-unreachable collapse | Implemented | Partial | Integrate with broader host health |
-| Collector-error presentation | Implemented | Partial | Define severity contribution |
-| Four-card public summary | Implemented | Supported | Do not copy the legacy layout |
-| Public Overall Status | Service results only | Major gap | Add unified cross-domain aggregation |
+| Image-update monitoring | Implemented | Supported | `UPDATE` remains informational |
+| TrueNAS host-unreachable collapse | Implemented | Supported | Integrated into unified host health |
+| Collector-error presentation | Implemented | Supported | Severity and deduplication completed in Phase 3C.6 |
+| Four-card public summary | Implemented | Supported | Public layout retained |
+| Public Overall Status | Implemented | Supported | Unified cross-domain aggregation completed in Phase 3C.6 |
 
 ## Overall Status findings
 
-Public Overall Status currently reacts to configured services:
+Phase 3C.6 closes the unified-severity migration gap. Public Overall
+Status now evaluates configuration-driven results in deterministic
+domain order:
 
-    bad configured service     -> NOK
-    non-UP configured service  -> INFO
-    all configured services UP -> OK
+    Systems
+    Storage
+    Protection
+    Services
+    Uncovered collector errors
 
-These visible public results do not currently affect Overall Status:
+Global severity follows:
 
-    host Web UI failures
-    local-storage warnings and failures
-    backup warnings and failures
-    snapshot warnings and failures
-    replication warnings and failures
-    protection warnings and failures
-    collector errors
-    host-unreachable summaries
+    NOK > WARNING > INFO > OK
 
-Image updates should remain informational rather than service failures.
+Critical domain results produce `NOK`; warning and disabled results
+produce `WARNING`; uncertain, active, update, and other informational
+results produce `INFO`; healthy results produce `OK`.
 
-Pools, temperatures, and SMART cannot contribute until their public
-collectors exist.
+Collector errors are classified separately. Critical transport failures
+can produce `NOK`; authentication, host-key, parsing, command, unknown,
+and other collector failures are warning-grade. Image-update collector
+failures remain warning-grade.
 
-Unified severity is therefore a major migration-parity requirement.
+Collector errors already represented by a domain result elevate that
+result when necessary instead of creating a duplicate issue. Placeholder
+raw values do not consume collector errors. The first issue at the
+highest active severity becomes the displayed Overall Status note.
+
+Reference-mode Overall Status remains unchanged.
 
 ## Generic behavior to migrate
 
@@ -234,8 +240,9 @@ The public runtime now supports:
 - system-information propagation into the public Systems summary;
 - validation and startup-preflight enforcement for remote hosts.
 
-System-information results intentionally do not contribute to global Overall
-Status yet. That severity boundary remains assigned to Phase 3C.6.
+At Phase 3C.2 completion, integration with global Overall Status was
+intentionally deferred. Phase 3C.6 now consumes system-information and
+host-health results through the public Systems domain.
 
 ## Phase 3C.3 completion
 
@@ -257,9 +264,9 @@ The public runtime now supports:
 - live pool rows and host failures in the public Storage summary card;
 - configuration validation requiring TrueNAS host type and explicit SSH.
 
-Pool severity intentionally affects only the public Storage card and
-Runtime Detail. It does not yet contribute to global Overall Status;
-that unified severity boundary remains assigned to Phase 3C.6.
+At Phase 3C.3 completion, pool severity was limited to the public
+Storage card and Runtime Detail. Phase 3C.6 now includes pool and
+host-level pool health in unified public Overall Status.
 
 Validation included 212 deterministic regression tests, official and
 starter configuration validation, real read-only pool queries against
@@ -290,9 +297,9 @@ The public runtime now supports:
 - deterministic regression coverage for collection, parsing,
   classification, rendering, configuration gates, and SSH requirements.
 
-Temperature and SMART results intentionally do not contribute to global
-Overall Status yet. That severity boundary remains assigned to
-Phase 3C.6.
+At Phase 3C.4 completion, temperature and SMART severity remained
+limited to the Storage domain. Phase 3C.6 now includes these disk-health
+results in unified public Overall Status.
 
 ## Phase 3C.5 completion — data-protection severity parity
 
@@ -336,13 +343,60 @@ confident coverage. Replication status propagates only when source
 host, source datasets, and target prefix match confidently. When
 both sources match, the worst live severity wins.
 
-The change is isolated to the configuration-driven Protection
-domain. Global Overall Status remains unchanged and is reserved
-for Phase 3C.6.
+At Phase 3C.5 completion, the normalized contract remained isolated
+to the configuration-driven Protection domain. Phase 3C.6 now consumes
+that contract as part of unified public Overall Status.
 
 Deterministic validation completed with 230 passing tests. An
 isolated public render confirmed the integrated Protection card
 contract without modifying the production dashboard.
+
+## Phase 3C.6 completion — unified public Overall Status
+
+Phase 3C.6 establishes one deterministic public Overall Status across
+the complete configuration-driven runtime.
+
+The aggregation consumes results in this order:
+
+1. Systems;
+2. Storage;
+3. Protection;
+4. Services;
+5. uncovered collector errors.
+
+The global result follows `NOK > WARNING > INFO > OK`. The first issue
+at the highest active severity becomes the displayed note.
+
+Systems includes configured host Web UI, system-information, and
+service-derived reachability. Storage includes local and remote
+filesystem checks, TrueNAS pool health, temperatures, and SMART health.
+Protection includes backup-marker checks, snapshot tasks, replication
+tasks, and configured relationships. Services includes HTTP, local and
+remote Docker, and TrueNAS application status after image-update
+overlays.
+
+Collector errors are classified and contribute conservatively.
+Network, timeout, and refused-connection failures are critical.
+Authentication, host-key, parsing, command, unknown, and other failures
+are warning-grade. Image-update collector failures remain
+warning-grade.
+
+When the same failure is already represented by a domain result, the
+domain result is elevated when necessary and the collector issue is
+deduplicated. Placeholder raw values such as `-`, `N/A`, `none`, and
+`unknown` do not suppress uncovered collector failures.
+
+The implementation is active only in `public` mode. Reference mode
+retains its original collectors, presentation, and Overall Status
+behavior.
+
+Validation completed with 182 configuration-runtime tests and 240
+tests across complete unittest discovery. Python compilation, shell
+syntax, configuration validation, Docker Compose validation, isolated
+safe rendering, test-structure guards, and public/reference runtime
+regressions passed. The isolated render produced a configuration-driven
+`NOK` result for an unreachable example host while the production
+dashboard hash and modification time remained unchanged.
 
 ## Validated Phase 3C sequence
 
@@ -362,6 +416,7 @@ contract without modifying the production dashboard.
                  Complete
 
     Phase 3C.6  Unified public Overall Status and collector-error parity
+                 Complete
 
     Phase 3C.7  Public schema and presentation consolidation
 

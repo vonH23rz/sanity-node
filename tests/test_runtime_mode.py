@@ -631,6 +631,10 @@ exit 97
         self.assertEqual(result.returncode, 0, output)
         self.assertTrue(rendered, output)
         self.assertTrue(commands.strip())
+        self.assertIn(
+            "Overall Status: NOK",
+            rendered,
+        )
 
         for expected_label in (
             "Public Four-Card Preview",
