@@ -79,18 +79,18 @@ The generator currently consumes these host module switches:
 
 These example configuration switches are not operational collector gates:
 
-    pools
     apps
     services
 
-`system_info` became operational in Phase 3C.2. `pools` remains a genuine
-missing public capability.
+`system_info` became operational in Phase 3C.2 and `pools` became
+operational in Phase 3C.3.
 
 Configured services are selected through their service-level `check`
 value and host eligibility rather than `modules.apps` or
 `modules.services`.
 
-Those two flags require later clarification, deprecation, or removal.
+Those two compatibility flags require later clarification,
+deprecation, or removal.
 
 ## Migration parity matrix
 
@@ -120,6 +120,8 @@ Those two flags require later clarification, deprecation, or removal.
 | TrueNAS host-unreachable collapse | Implemented | Supported | Integrated into unified host health |
 | Collector-error presentation | Implemented | Supported | Severity and deduplication completed in Phase 3C.6 |
 | Four-card public summary | Implemented | Supported | Public layout retained |
+| Public Runtime Detail presentation | Implemented | Supported | Explicit builder context completed in Phase 3C.7 |
+| Shared public severity classification | Implemented | Supported | Overall Status and Systems summary share one contract from Phase 3C.7 |
 | Public Overall Status | Implemented | Supported | Unified cross-domain aggregation completed in Phase 3C.6 |
 
 ## Overall Status findings
@@ -398,6 +400,33 @@ regressions passed. The isolated render produced a configuration-driven
 `NOK` result for an unreachable example host while the production
 dashboard hash and modification time remained unchanged.
 
+## Phase 3C.7 completion — public schema and presentation consolidation
+
+Phase 3C.7 removes the post-render whole-HTML promotion shim and makes
+public or reference presentation an explicit input to every
+configuration-driven Runtime Detail builder.
+
+Public mode now renders `Runtime Detail`, current Overall Status
+contribution descriptions, and public-safe result wording directly at
+the source. Reference mode retains its existing `Config Preview`
+compatibility presentation. Collector results and status dictionaries
+remain unchanged by presentation rendering.
+
+The Overall Status severity classifier was also promoted to the shared
+`public_status_severity()` contract. Unified public Overall Status and
+the Systems summary now classify healthy, informational, warning, and
+critical states consistently. In particular, a healthy Web UI result
+with unavailable optional telemetry remains healthy, while warning-grade
+system telemetry produces a warning card.
+
+Validation completed with 187 configuration-runtime tests and 245 tests
+across complete unittest discovery. Python and shell syntax checks,
+configuration validation, Docker Compose validation, AST/test-harness
+guards, isolated public rendering, and public/reference regressions all
+passed. The production dashboard hash and modification time remained
+unchanged, and the production generation timer remained active and
+enabled.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -419,6 +448,7 @@ dashboard hash and modification time remained unchanged.
                  Complete
 
     Phase 3C.7  Public schema and presentation consolidation
+                 Complete
 
     Phase 3C.8  Production configuration migration rehearsal
 
@@ -469,12 +499,11 @@ Phase 3C.1 is complete when:
 The public runtime already contains substantial configuration-driven
 coverage. Service inventory is not the principal migration blocker.
 
-The required path to production parity is:
+The generic collector, severity, schema, and presentation gaps are
+closed through Phase 3C.7. The remaining path to production parity is:
 
-1. add generic system telemetry;
-2. add TrueNAS pool, temperature, and SMART telemetry;
-3. connect existing storage and protection results to global severity;
-4. rehearse the full production configuration in isolation;
-5. make a separate, explicit reference-retirement decision.
+1. rehearse the complete production configuration in isolation;
+2. rehearse the public-mode production cutover;
+3. make a separate, explicit reference-retirement decision.
 
 Reference mode remains the known-good fallback throughout this work.

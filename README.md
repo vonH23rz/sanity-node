@@ -31,7 +31,7 @@ The `dashboard.runtime_mode` setting selects which path executes. `public` runs 
 
 **Phase 2F is complete.**
 
-The Phase 2F closure baseline includes:
+The current repository baseline includes:
 
 - configuration-driven hosts and host-based cards
 - Systems, Storage, Protection, and Services summary cards
@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **227 deterministic standard-library regression tests**
+- **245 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, Phase 3C.4 added configuration-driven TrueNAS temperature and SMART health, Phase 3C.5 normalized data-protection severity, and Phase 3C.6 now derives public Overall Status from Systems, Storage, Protection, Services, and classified collector errors without changing the reference runtime.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, Phase 3C.4 added configuration-driven TrueNAS temperature and SMART health, Phase 3C.5 normalized data-protection severity, and Phase 3C.6 derives public Overall Status from Systems, Storage, Protection, Services, and classified collector errors. Phase 3C.7 now renders public Runtime Detail directly from each builder and uses one shared public severity contract while preserving the reference runtime.
 
 ---
 
@@ -273,7 +273,7 @@ Completed configuration-driven behavior:
 - missing backup markers and missing snapshots are critical; stale backups, inactive timers, stale snapshots, paused tasks, and disabled protection tasks are warnings
 - backup, snapshot, replication, parsing, schedule, SSH, and collector uncertainty is warning-grade instead of being allowed to appear healthy
 - active replication states such as `RUNNING`, `PENDING`, and `WAITING` remain informational
-- configured protection relationships can render preview backup/replication intent from `config.yaml`
+- configured protection relationships render backup/replication intent in public Runtime Detail from `config.yaml`
 - replication relationships can inherit live task status when source host, configured datasets, and target prefix confidently match a discovered TrueNAS replication task
 - replication relationships can also inherit live snapshot status when every configured dataset is confidently covered by an exact snapshot task or an explicitly recursive ancestor task
 - recursive snapshot coverage respects TrueNAS exclusion paths; missing, malformed, partial, or ambiguous coverage leaves the relationship unchanged
@@ -281,8 +281,8 @@ Completed configuration-driven behavior:
 - unmatched or incomplete relationships retain their configured status instead of being treated as collector failures
 - configured `summary_cards` select and order the public dashboard summary cards: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
-- public mode renders only the selected summary cards and suppresses the older host-based preview row
-- reference mode retains the older host-based preview row unchanged for compatibility
+- public mode renders only the selected summary cards and suppresses the legacy host-based compatibility row
+- reference mode retains the legacy host-based compatibility row unchanged
 - remote Docker services remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote local storage checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
 - remote backup checks remain `NOT CHECKED` unless their host is an eligible Linux host with explicit SSH credentials
@@ -495,7 +495,7 @@ For each matching host, Sanity Node:
 - distinguishes enabled, disabled, missing, old, and fresh tasks
 - respects TrueNAS `allow_empty: false` behavior when no dataset changes have occurred
 
-The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The current preview uses the configured Sanity Node SSH credentials.
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.snapshots` set to `true`. The public runtime uses the configured Sanity Node SSH credentials.
 
 Configured replication relationships can use these live snapshot rows as a precondition overlay. Every configured relationship dataset must be confidently covered. An exact task dataset always qualifies. An ancestor task qualifies only when `recursive` is explicitly `true`, the configured dataset is below that task dataset on a dataset boundary, and no TrueNAS exclusion equals or contains the configured dataset. Missing or malformed recursion/exclusion metadata, partial coverage, and collector failures do not convert an unmatched relationship into a warning or failure.
 
@@ -527,7 +527,7 @@ For each matching host, Sanity Node:
 - shows the last execution time and last snapshot when available
 - reports when no replication tasks are configured
 
-The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials.
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The public runtime uses the configured Sanity Node SSH credentials.
 
 Replication rows now contribute directly to the public Protection summary card and public Overall Status. Successful tasks are `OK`; active tasks remain informational; paused, disabled, unknown, or malformed states are warnings; failed, errored, or aborted tasks are critical. The original hardcoded reference replication table remains untouched.
 
@@ -559,7 +559,7 @@ Supported providers:
 - `diun` reads Prometheus image-check metrics
 - `truenas` reads native app update fields through `midclt call app.query`
 
-The preview reports tracked images or apps, available updates, and update details. `UPDATE` is a maintenance notice, not a service failure.
+The Runtime Detail reports tracked images or apps, available updates, and update details. `UPDATE` is a maintenance notice, not a service failure.
 
 Diun sources require a metrics URL. TrueNAS sources require an enabled `type: truenas` host with working SSH access.
 
@@ -634,9 +634,28 @@ The first issue at the highest active severity becomes the displayed
 Overall Status note. Reference mode retains its original Overall
 Status behavior.
 
+### Explicit public runtime presentation
+
+Phase 3C.7 removes the whole-HTML promotion shim previously used to
+rewrite preview output after rendering. Each configuration-driven
+detail builder now receives explicit presentation context.
+
+In `public` mode, builders directly render `Runtime Detail` headings,
+current contribution descriptions, and public-safe result wording. In
+`reference` mode, they retain the existing `Config Preview` compatibility
+presentation. Status dictionaries and collector output are not mutated
+for presentation purposes.
+
+The shared `public_status_severity()` contract is used by both unified
+public Overall Status and the Systems summary card. Healthy `UP` and
+`OK` results count as healthy, warning-grade results render a warning
+card, informational states remain informational, and critical states
+remain down or unavailable. Reference-mode classification remains
+unchanged.
+
 ### `summary_cards`
 
-The public dashboard summary is controlled by the optional `summary_cards` list in `config.yaml`. In public mode it is rendered as the primary System Overview, while the older host-based preview row is suppressed. Reference mode retains the legacy preview presentation unchanged.
+The public dashboard summary is controlled by the optional `summary_cards` list in `config.yaml`. In public mode it is rendered as the primary System Overview, while the legacy host-based compatibility row is suppressed. Reference mode retains that compatibility presentation unchanged.
 
 Supported card names are:
 
@@ -654,7 +673,7 @@ The order in the list is the order shown on the dashboard. Unknown card names ar
 Systems · Storage · Protection · Services
 ```
 
-The preview header also shows the active card selection, making it easier to confirm which cards were actually rendered.
+The Dashboard Summary header also shows the active card selection, making it easier to confirm which cards were actually rendered.
 
 To avoid rendering the same complete service inventory twice, host-based cards use compact service details whenever the Services card is active. Their App, Helper, UP, DOWN, UPDATE, and INFO counts remain unchanged, but only non-`UP` services are listed. When every configured service is healthy, the host card shows one `Configured services — ALL UP` line. Disabling the Services card restores the full host-level service list. An unreachable TrueNAS host still collapses to `Host unreachable` and `UNAVAILABLE` before this compaction is applied.
 
@@ -821,7 +840,7 @@ The current tests protect:
 - summary-card normalization and fallback behavior
 - compact host-service exception rendering, `ALL UP` output, full-detail fallback, and unreachable-host precedence
 - Storage, Protection, and Services summary-card empty states, counts, severity precedence, detail rendering, and multi-column behavior
-- TrueNAS snapshot and replication preview empty states, host/task counts, task and execution badges, dataset details, and HTML escaping
+- TrueNAS snapshot and replication Runtime Detail empty states, host/task counts, task and execution badges, dataset details, and HTML escaping
 - snapshot freshness decisions, five-minute grace handling, `allow_empty` behavior, and TrueNAS replication execution-state classification
 - snapshot and replication collector error rows, empty-task handling, task sorting, field normalization, and successful row assembly
 - snapshot schedule cron parsing, normal and overnight windows, TrueNAS weekday mapping, and deterministic previous-run searches
@@ -937,10 +956,10 @@ TrueNAS application checks, snapshots, replications, backups,
 protection, and image updates are already substantially
 configuration-driven.
 
-Phase 3C.2 through Phase 3C.6 closed the collector and
-unified-severity gaps identified by the audit. The remaining work is:
+Phase 3C.2 through Phase 3C.7 closed the collector, severity,
+schema, and presentation gaps identified by the audit. The remaining
+work is:
 
-- public schema and presentation consolidation
 - production configuration migration rehearsal
 - public-mode production cutover rehearsal
 - reference retirement decision
@@ -958,6 +977,7 @@ The validated Phase 3C sequence is:
     Phase 3C.6  Unified Overall Status and collector-error parity
                  COMPLETE
     Phase 3C.7  Public schema and presentation consolidation
+                 COMPLETE
     Phase 3C.8  Production configuration migration rehearsal
     Phase 3C.9  Public-mode production cutover rehearsal
     Phase 3C.10 Reference retirement decision
