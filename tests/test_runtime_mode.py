@@ -263,6 +263,88 @@ image_updates:
         self.assertIn("must be true", output)
 
 
+    def test_pool_module_requires_truenas_host_type(self):
+        result = self.validate(
+            """
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: storage
+    enabled: true
+    display_name: Storage
+    hostname: storage
+    type: linux
+    modules:
+      pools: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("hosts[1].modules.pools", output)
+        self.assertIn("host type: truenas", output)
+
+    def test_pool_module_requires_explicit_ssh(self):
+        result = self.validate(
+            """
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: nas
+    enabled: true
+    display_name: NAS
+    hostname: nas
+    address: 192.0.2.20
+    type: truenas
+    modules:
+      pools: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("hosts[1].ssh", output)
+        self.assertIn("modules.pools", output)
+
+
 class RuntimeModeFullRenderTests(unittest.TestCase):
     def render_starter(self, runtime_mode):
         with tempfile.TemporaryDirectory() as temporary_directory:

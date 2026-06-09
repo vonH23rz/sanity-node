@@ -463,6 +463,69 @@ class StartupPreflightTests(unittest.TestCase):
             errors,
         )
 
+    def test_truenas_pool_module_requires_ssh(self):
+        config = self.minimal_config()
+        config["hosts"].extend(
+            [
+                {
+                    "id": "pool-host",
+                    "enabled": True,
+                    "display_name": "Pool Host",
+                    "hostname": "pool-host",
+                    "address": "192.0.2.30",
+                    "type": "truenas",
+                    "modules": {
+                        "pools": True,
+                    },
+                },
+                {
+                    "id": "pool-disabled",
+                    "enabled": True,
+                    "display_name": "Pool Disabled",
+                    "hostname": "pool-disabled",
+                    "address": "192.0.2.31",
+                    "type": "truenas",
+                    "modules": {
+                        "pools": False,
+                    },
+                },
+            ]
+        )
+
+        requirements = PREFLIGHT.collect_ssh_requirements(
+            config
+        )
+
+        self.assertEqual(
+            requirements["pool-host"],
+            ["TrueNAS pool monitoring"],
+        )
+        self.assertNotIn(
+            "pool-disabled",
+            requirements,
+        )
+
+        runtime = self.make_runtime(config)
+        temporary, config_path, output_path, log_path = runtime
+        self.addCleanup(temporary.cleanup)
+
+        requirements, errors = PREFLIGHT.run_preflight(
+            config_path,
+            output_path,
+            log_path,
+        )
+
+        self.assertEqual(
+            requirements["pool-host"],
+            ["TrueNAS pool monitoring"],
+        )
+        self.assertIn(
+            "host 'Pool Host' requires SSH for "
+            "TrueNAS pool monitoring, "
+            "but its ssh section is missing or disabled",
+            errors,
+        )
+
     def test_cli_returns_nonzero_for_missing_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

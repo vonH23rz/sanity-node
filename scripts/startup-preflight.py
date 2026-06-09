@@ -106,6 +106,9 @@ def collect_ssh_requirements(config):
                 add(host_id, "remote Linux system information")
 
         if host_type == "truenas":
+            if modules.get("pools") is True:
+                add(host_id, "TrueNAS pool monitoring")
+
             if modules.get("snapshots") is True:
                 add(host_id, "TrueNAS snapshot monitoring")
 

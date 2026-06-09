@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **202 deterministic standard-library regression tests**
+- **212 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 now adds configuration-driven collector-local, remote Linux, and remote TrueNAS system information without changing the reference runtime.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, and Phase 3C.3 adds configuration-driven TrueNAS pool capacity and health without changing the reference runtime.
 
 ---
 
@@ -247,6 +247,7 @@ Completed Phase 2F configuration-driven behavior:
 
 - configured hosts appear in the Systems summary card and the Configured Hosts detail table
 - enabled hosts with `modules.system_info: true` can report hostname, OS, kernel, uptime, CPU, memory, load, and host-type-aware Apps or Containers activity
+- enabled TrueNAS hosts with `modules.pools: true` can report live pool inventory, capacity, usage, and ZFS health
 - collector-local system information requires no SSH credentials
 - eligible remote Linux and TrueNAS system-information checks use each host's explicit SSH identity
 - system-information reachability can improve the Systems summary card without changing global Overall Status
@@ -354,6 +355,57 @@ The remote command verifies that the marker exists, reads its epoch modification
 Fresh markers report `OK`; stale markers report `OLD`; inactive timers report `WARNING`; missing markers report `MISSING`. SSH transport failures, marker-stat failures, and malformed responses report `UNKNOWN`. Ineligible remote checks remain `NOT CHECKED`.
 
 Remote backup checks remain part of the config-driven preview path. They do not affect Overall Status or modify the original hardcoded backup checks.
+
+### TrueNAS pool capacity and health checks
+
+Enable live pool monitoring for an enabled TrueNAS host:
+
+```yaml
+hosts:
+  - id: truenas-main
+    enabled: true
+    type: truenas
+    address: 192.168.1.20
+
+    ssh:
+      enabled: true
+      user: truenas_admin
+      key_file: /app/ssh/id_ed25519
+
+    modules:
+      pools: true
+```
+
+The host must provide a non-empty `address` and explicit
+enabled SSH settings with `ssh.user` and `ssh.key_file`.
+Sanity Node queries `midclt call pool.query` through that
+host-specific SSH identity.
+
+For every discovered pool, the public runtime reports:
+
+- pool name and current ZFS status
+- total, allocated, and available capacity
+- calculated allocation percentage
+- conservative `OK`, `WARNING`, `CRITICAL`, or `UNKNOWN`
+  health classification
+
+An `ONLINE` pool is `OK` only when the available TrueNAS
+health metadata is consistent. `DEGRADED` pools report
+`WARNING`; faulted, offline, unavailable, removed, or
+suspended pools report `CRITICAL`. Missing or unrecognized
+health metadata remains `UNKNOWN` rather than being treated
+as healthy.
+
+Network and timeout failures report `UNREACHABLE`.
+Authentication, host-key, command, and malformed-response
+failures report `UNKNOWN`. Hosts with the module disabled
+remain `NOT CHECKED` and are not contacted.
+
+Pool rows appear in the public Storage summary and in the
+Configured TrueNAS Pools Runtime Detail table. Pool severity
+affects the Storage card, but it does not yet contribute to
+global Overall Status. Unified severity remains assigned to
+Phase 3C.6.
 
 ### TrueNAS snapshot checks
 
