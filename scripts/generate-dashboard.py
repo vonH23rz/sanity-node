@@ -4518,6 +4518,1051 @@ def build_config_truenas_pool_preview(hosts, rows, statuses):
 """
 
 
+def normalize_config_truenas_disk_health_hosts(hosts):
+    normalized = []
+
+    for host in hosts or []:
+        if not isinstance(host, dict):
+            continue
+
+        modules = host.get("modules")
+        modules = modules if isinstance(modules, dict) else {}
+
+        temperatures_enabled = (
+            modules.get("temperatures") is True
+        )
+        smart_enabled = modules.get("smart") is True
+
+        if not temperatures_enabled and not smart_enabled:
+            continue
+
+        host_id = str(host.get("id") or "").strip()
+        host_key = configured_host_key(host)
+
+        if not host_key:
+            continue
+
+        host_type = str(
+            host.get("type") or ""
+        ).strip().lower()
+        enabled = bool(host.get("enabled", True))
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+        ssh = ssh if isinstance(ssh, dict) else {}
+
+        item = {
+            "key": host_key,
+            "id": host_id,
+            "display_name": configured_host_display_name(host),
+            "type": host_type,
+            "address": address,
+            "temperatures_enabled": temperatures_enabled,
+            "smart_enabled": smart_enabled,
+            "eligible": False,
+            "reason": "disk-health modules disabled",
+            "ssh_user": "",
+            "ssh_key_file": "",
+        }
+
+        if not enabled:
+            item["reason"] = "host disabled"
+        elif host_type != "truenas":
+            item["reason"] = (
+                "temperature and SMART monitoring require "
+                "a TrueNAS host"
+            )
+        elif not address:
+            item["reason"] = "missing host address"
+        elif ssh.get("enabled") is not True:
+            item["reason"] = (
+                "host SSH configuration missing or disabled"
+            )
+        else:
+            ssh_user = str(ssh.get("user") or "").strip()
+            ssh_key_file = str(
+                ssh.get("key_file") or ""
+            ).strip()
+
+            if not ssh_user:
+                item["reason"] = "missing ssh.user"
+            elif not ssh_key_file:
+                item["reason"] = "missing ssh.key_file"
+            else:
+                item["eligible"] = True
+                item["reason"] = (
+                    "TrueNAS temperature and SMART monitoring"
+                )
+                item["ssh_user"] = ssh_user
+                item["ssh_key_file"] = ssh_key_file
+
+        normalized.append(item)
+
+    return normalized
+
+
+def config_temperature_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number != number:
+        return None
+
+    if number in (float("inf"), float("-inf")):
+        return None
+
+    return round(number, 1)
+
+
+def config_truenas_temperature_command():
+    return r"""python3 - <<'REMOTE_PY'
+import json
+import os
+import re
+import subprocess
+
+
+def run(command, timeout=30):
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def base_device(path):
+    real = os.path.realpath(path)
+    name = os.path.basename(real)
+
+    match = re.match(r"^(nvme\d+n\d+)p\d+$", name)
+
+    if match:
+        return match.group(1)
+
+    match = re.match(
+        r"^((?:sd|vd|xvd|hd)[a-z]+)\d+$",
+        name,
+    )
+
+    if match:
+        return match.group(1)
+
+    return name
+
+
+def temperature_value(value):
+    if isinstance(value, dict):
+        for key in ("temperature", "temp", "value"):
+            if key in value:
+                return temperature_value(value[key])
+
+        return None
+
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+zpool = run(["zpool", "status", "-P"])
+
+if zpool.returncode != 0:
+    output = (zpool.stdout + zpool.stderr).strip()
+    print(json.dumps({
+        "error": output or "zpool status failed",
+        "pools": {},
+    }))
+    raise SystemExit(0)
+
+pool_devices = {}
+current_pool = None
+
+for line in zpool.stdout.splitlines():
+    match = re.match(r"\s*pool:\s+(\S+)", line)
+
+    if match:
+        current_pool = match.group(1)
+        pool_devices.setdefault(current_pool, set())
+        continue
+
+    if not current_pool:
+        continue
+
+    parts = line.split()
+
+    if not parts:
+        continue
+
+    token = parts[0]
+
+    if token.startswith("/dev/"):
+        pool_devices.setdefault(
+            current_pool,
+            set(),
+        ).add(base_device(token))
+
+temperature_error = None
+temperatures = {}
+
+try:
+    result = run(
+        ["midclt", "call", "disk.temperatures"],
+        timeout=45,
+    )
+
+    if result.returncode != 0:
+        temperature_error = (
+            result.stdout + result.stderr
+        ).strip() or "disk.temperatures failed"
+    else:
+        parsed = json.loads(result.stdout)
+
+        if isinstance(parsed, dict):
+            temperatures = parsed
+        else:
+            temperature_error = (
+                "disk.temperatures did not return a mapping"
+            )
+except Exception as exc:
+    temperature_error = f"disk.temperatures failed: {exc}"
+
+pools = {}
+
+for pool_name, devices in pool_devices.items():
+    values = []
+
+    for device in sorted(devices):
+        value = temperatures.get(device)
+
+        if value is None:
+            value = temperatures.get(f"/dev/{device}")
+
+        value = temperature_value(value)
+
+        if value is not None:
+            values.append(value)
+
+    pools[pool_name] = {
+        "devices": sorted(devices),
+        "avg": (
+            round(sum(values) / len(values), 1)
+            if values
+            else None
+        ),
+        "max": round(max(values), 1) if values else None,
+    }
+
+print(json.dumps({
+    "error": temperature_error,
+    "pools": pools,
+}))
+REMOTE_PY"""
+
+
+def config_truenas_smart_command():
+    return r"""python3 - <<'REMOTE_PY'
+import json
+import os
+import re
+import subprocess
+
+
+def run(command, timeout=30):
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return type("Result", (), {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": str(exc),
+        })()
+
+
+def base_device(path):
+    real = os.path.realpath(path)
+    name = os.path.basename(real)
+
+    match = re.match(r"^(nvme\d+n\d+)p\d+$", name)
+
+    if match:
+        return match.group(1)
+
+    match = re.match(
+        r"^((?:sd|vd|xvd|hd)[a-z]+)\d+$",
+        name,
+    )
+
+    if match:
+        return match.group(1)
+
+    return name
+
+
+def smart_for_device(device):
+    commands = (
+        ["sudo", "-n", "smartctl", "-H", f"/dev/{device}"],
+        ["smartctl", "-H", f"/dev/{device}"],
+    )
+    last_output = ""
+
+    for command in commands:
+        result = run(command)
+        output = (
+            result.stdout + result.stderr
+        ).strip()
+        last_output = output
+        lowered = output.lower()
+
+        if "critical warning" in lowered:
+            match = re.search(
+                r"critical warning:\s*0x([0-9a-f]+)",
+                lowered,
+            )
+
+            if match:
+                if match.group(1) != "00":
+                    return {
+                        "device": device,
+                        "state": "CRITICAL",
+                        "note": (
+                            f"{device}: NVMe critical warning "
+                            f"0x{match.group(1)}"
+                        ),
+                    }
+
+                return {
+                    "device": device,
+                    "state": "OK",
+                    "note": (
+                        f"{device}: NVMe critical warning 0x00"
+                    ),
+                }
+
+        failed_patterns = (
+            r"overall-health.*result:\s*failed",
+            r"smart health status:\s*failed",
+            r"smart overall-health.*failed",
+        )
+
+        if any(
+            re.search(pattern, lowered)
+            for pattern in failed_patterns
+        ):
+            return {
+                "device": device,
+                "state": "CRITICAL",
+                "note": f"{device}: SMART health failed",
+            }
+
+        passed_patterns = (
+            r"overall-health.*result:\s*passed",
+            r"smart health status:\s*ok",
+        )
+
+        if any(
+            re.search(pattern, lowered)
+            for pattern in passed_patterns
+        ):
+            return {
+                "device": device,
+                "state": "OK",
+                "note": f"{device}: SMART passed",
+            }
+
+        if "passed" in lowered and "failed" not in lowered:
+            return {
+                "device": device,
+                "state": "OK",
+                "note": f"{device}: SMART passed",
+            }
+
+    return {
+        "device": device,
+        "state": "UNKNOWN",
+        "note": (
+            f"{device}: SMART unavailable"
+            + (f" ({last_output})" if last_output else "")
+        ),
+    }
+
+
+zpool = run(["zpool", "status", "-P"])
+
+if zpool.returncode != 0:
+    output = (zpool.stdout + zpool.stderr).strip()
+    print(json.dumps({
+        "error": output or "zpool status failed",
+        "pools": {},
+    }))
+    raise SystemExit(0)
+
+pool_devices = {}
+current_pool = None
+
+for line in zpool.stdout.splitlines():
+    match = re.match(r"\s*pool:\s+(\S+)", line)
+
+    if match:
+        current_pool = match.group(1)
+        pool_devices.setdefault(current_pool, set())
+        continue
+
+    if not current_pool:
+        continue
+
+    parts = line.split()
+
+    if not parts:
+        continue
+
+    token = parts[0]
+
+    if token.startswith("/dev/"):
+        pool_devices.setdefault(
+            current_pool,
+            set(),
+        ).add(base_device(token))
+
+pools = {}
+
+for pool_name, devices in pool_devices.items():
+    pools[pool_name] = {
+        "devices": [
+            smart_for_device(device)
+            for device in sorted(devices)
+        ],
+    }
+
+print(json.dumps({
+    "error": None,
+    "pools": pools,
+}))
+REMOTE_PY"""
+
+
+def parse_config_truenas_temperature_payload(output):
+    try:
+        payload = json.loads(str(output or "").strip())
+    except Exception as exc:
+        return {}, f"invalid temperature JSON: {exc}"
+
+    if not isinstance(payload, dict):
+        return {}, "temperature query did not return a mapping"
+
+    pools = payload.get("pools")
+
+    if not isinstance(pools, dict):
+        return {}, "temperature query pools value is not a mapping"
+
+    normalized = {}
+
+    for pool_name, value in pools.items():
+        pool_name = str(pool_name or "").strip()
+
+        if not pool_name:
+            return {}, "temperature query returned an empty pool name"
+
+        if not isinstance(value, dict):
+            return (
+                {},
+                f"temperature data for {pool_name} is not a mapping",
+            )
+
+        devices = value.get("devices")
+        devices = devices if isinstance(devices, list) else []
+
+        normalized[pool_name] = {
+            "devices": sorted(
+                {
+                    str(device).strip()
+                    for device in devices
+                    if str(device).strip()
+                }
+            ),
+            "avg": config_temperature_number(
+                value.get("avg")
+            ),
+            "max": config_temperature_number(
+                value.get("max")
+            ),
+        }
+
+    error = str(payload.get("error") or "").strip() or None
+
+    return normalized, error
+
+
+def parse_config_truenas_smart_payload(output):
+    try:
+        payload = json.loads(str(output or "").strip())
+    except Exception as exc:
+        return {}, f"invalid SMART JSON: {exc}"
+
+    if not isinstance(payload, dict):
+        return {}, "SMART query did not return a mapping"
+
+    pools = payload.get("pools")
+
+    if not isinstance(pools, dict):
+        return {}, "SMART query pools value is not a mapping"
+
+    normalized = {}
+
+    for pool_name, value in pools.items():
+        pool_name = str(pool_name or "").strip()
+
+        if not pool_name:
+            return {}, "SMART query returned an empty pool name"
+
+        if not isinstance(value, dict):
+            return (
+                {},
+                f"SMART data for {pool_name} is not a mapping",
+            )
+
+        devices = value.get("devices")
+        devices = devices if isinstance(devices, list) else []
+        normalized_devices = []
+
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+
+            state = str(
+                device.get("state") or "UNKNOWN"
+            ).strip().upper()
+
+            if state not in {"OK", "CRITICAL", "UNKNOWN"}:
+                state = "UNKNOWN"
+
+            normalized_devices.append({
+                "device": str(
+                    device.get("device") or "-"
+                ).strip(),
+                "state": state,
+                "note": str(
+                    device.get("note") or "SMART status unavailable"
+                ).strip(),
+            })
+
+        normalized[pool_name] = {
+            "devices": normalized_devices,
+        }
+
+    error = str(payload.get("error") or "").strip() or None
+
+    return normalized, error
+
+
+def config_temperature_status(pool_name, info, error=None):
+    if not isinstance(info, dict):
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": error or "temperature data unavailable",
+            "avg": None,
+            "max": None,
+            "devices": [],
+        }
+
+    avg_temp = config_temperature_number(info.get("avg"))
+    max_temp = config_temperature_number(info.get("max"))
+    devices = info.get("devices")
+    devices = devices if isinstance(devices, list) else []
+
+    if avg_temp is None or max_temp is None:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": error or "temperature data unavailable",
+            "avg": avg_temp,
+            "max": max_temp,
+            "devices": devices,
+        }
+
+    is_nvme = (
+        "nvme" in str(pool_name or "").lower()
+        or any(
+            str(device).lower().startswith("nvme")
+            for device in devices
+        )
+    )
+
+    if is_nvme and max_temp >= 70:
+        label = "WARNING"
+        css = "warning"
+    elif is_nvme and max_temp >= 60:
+        label = "INFO"
+        css = "info"
+    elif not is_nvme and max_temp >= 58:
+        label = "WARNING"
+        css = "warning"
+    elif not is_nvme and max_temp >= 50:
+        label = "INFO"
+        css = "info"
+    else:
+        label = "OK"
+        css = "ok"
+
+    return {
+        "label": label,
+        "css": css,
+        "raw": (
+            f"{avg_temp:g}°C avg / {max_temp:g}°C max"
+        ),
+        "avg": avg_temp,
+        "max": max_temp,
+        "devices": devices,
+    }
+
+
+def config_smart_pool_status(info, error=None):
+    if not isinstance(info, dict):
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": error or "SMART data unavailable",
+            "devices": [],
+        }
+
+    devices = info.get("devices")
+    devices = devices if isinstance(devices, list) else []
+
+    if not devices:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": error or "SMART data unavailable",
+            "devices": [],
+        }
+
+    critical = [
+        device
+        for device in devices
+        if device.get("state") == "CRITICAL"
+    ]
+    unknown = [
+        device
+        for device in devices
+        if device.get("state") == "UNKNOWN"
+    ]
+
+    if critical:
+        return {
+            "label": "CRITICAL",
+            "css": "bad",
+            "raw": (
+                critical[0].get("note")
+                or "SMART health failed"
+            ),
+            "devices": devices,
+        }
+
+    if unknown:
+        return {
+            "label": "UNKNOWN",
+            "css": "info",
+            "raw": (
+                unknown[0].get("note")
+                or "SMART status unavailable"
+            ),
+            "devices": devices,
+        }
+
+    return {
+        "label": "OK",
+        "css": "ok",
+        "raw": f"SMART passed on {len(devices)} device(s)",
+        "devices": devices,
+    }
+
+
+def config_disk_health_result(
+    temperature,
+    smart,
+    temperatures_enabled,
+    smart_enabled,
+):
+    active = []
+
+    if temperatures_enabled:
+        active.append(("Temperature", temperature))
+
+    if smart_enabled:
+        active.append(("SMART", smart))
+
+    if not active:
+        return (
+            "NOT CHECKED",
+            "info",
+            "disk-health modules disabled",
+        )
+
+    if any(status.get("css") == "bad" for _, status in active):
+        label = "CRITICAL"
+        css = "bad"
+    elif any(
+        status.get("css") == "warning"
+        for _, status in active
+    ):
+        label = "WARNING"
+        css = "warning"
+    elif any(
+        status.get("label") == "UNKNOWN"
+        for _, status in active
+    ):
+        label = "UNKNOWN"
+        css = "info"
+    elif any(
+        status.get("label") == "INFO"
+        for _, status in active
+    ):
+        label = "INFO"
+        css = "info"
+    else:
+        label = "OK"
+        css = "ok"
+
+    raw = " · ".join(
+        f"{name}: {status.get('raw', '-')}"
+        for name, status in active
+    )
+
+    return label, css, raw
+
+
+def collect_config_truenas_disk_health(hosts):
+    rows = []
+    statuses = {}
+    errors = []
+
+    for host in hosts:
+        host_key = host["key"]
+        base_status = {
+            "host_id": host.get("id", ""),
+            "display_name": host.get(
+                "display_name",
+                "Configured TrueNAS",
+            ),
+            "pool_count": 0,
+        }
+
+        if not host.get("eligible"):
+            statuses[host_key] = {
+                **base_status,
+                "label": "NOT CHECKED",
+                "css": "info",
+                "reachable": None,
+                "raw": host.get("reason") or "host not eligible",
+            }
+            continue
+
+        temperature_pools = {}
+        smart_pools = {}
+        temperature_error = None
+        smart_error = None
+        successful_queries = 0
+
+        if host.get("temperatures_enabled"):
+            returncode, output = run_config_host_ssh(
+                host,
+                config_truenas_temperature_command(),
+                timeout=75,
+            )
+
+            if returncode == 0:
+                successful_queries += 1
+                (
+                    temperature_pools,
+                    temperature_error,
+                ) = parse_config_truenas_temperature_payload(
+                    output
+                )
+            else:
+                temperature_error = (
+                    output or "TrueNAS temperature query failed"
+                )
+
+            if temperature_error:
+                errors.append(
+                    f"{host.get('display_name')}: "
+                    f"{temperature_error}"
+                )
+
+        if host.get("smart_enabled"):
+            returncode, output = run_config_host_ssh(
+                host,
+                config_truenas_smart_command(),
+                timeout=180,
+            )
+
+            if returncode == 0:
+                successful_queries += 1
+                smart_pools, smart_error = (
+                    parse_config_truenas_smart_payload(
+                        output
+                    )
+                )
+            else:
+                smart_error = (
+                    output or "TrueNAS SMART query failed"
+                )
+
+            if smart_error:
+                errors.append(
+                    f"{host.get('display_name')}: "
+                    f"{smart_error}"
+                )
+
+        pool_names = sorted(
+            set(temperature_pools) | set(smart_pools),
+            key=str.lower,
+        )
+
+        if not pool_names:
+            combined_error = " · ".join(
+                error
+                for error in (
+                    temperature_error,
+                    smart_error,
+                )
+                if error
+            )
+
+            if combined_error:
+                unreachable = (
+                    successful_queries == 0
+                    and config_error_indicates_host_unreachable(
+                        combined_error
+                    )
+                )
+                statuses[host_key] = {
+                    **base_status,
+                    "label": (
+                        "UNREACHABLE"
+                        if unreachable
+                        else "UNKNOWN"
+                    ),
+                    "css": "bad" if unreachable else "info",
+                    "reachable": False if not successful_queries else True,
+                    "raw": combined_error,
+                }
+            else:
+                statuses[host_key] = {
+                    **base_status,
+                    "label": "INFO",
+                    "css": "info",
+                    "reachable": True,
+                    "raw": "no disk-backed pools discovered",
+                }
+
+            continue
+
+        host_rows = []
+
+        for pool_name in pool_names:
+            if host.get("temperatures_enabled"):
+                temperature = config_temperature_status(
+                    pool_name,
+                    temperature_pools.get(pool_name),
+                    temperature_error,
+                )
+            else:
+                temperature = {
+                    "label": "NOT CHECKED",
+                    "css": "info",
+                    "raw": "temperature module disabled",
+                    "avg": None,
+                    "max": None,
+                    "devices": [],
+                }
+
+            if host.get("smart_enabled"):
+                smart = config_smart_pool_status(
+                    smart_pools.get(pool_name),
+                    smart_error,
+                )
+            else:
+                smart = {
+                    "label": "NOT CHECKED",
+                    "css": "info",
+                    "raw": "SMART module disabled",
+                    "devices": [],
+                }
+
+            label, css, raw = config_disk_health_result(
+                temperature,
+                smart,
+                host.get("temperatures_enabled"),
+                host.get("smart_enabled"),
+            )
+
+            host_rows.append({
+                "host_id": host.get("id", ""),
+                "host_key": host_key,
+                "host_name": host.get(
+                    "display_name",
+                    "Configured TrueNAS",
+                ),
+                "pool_name": pool_name,
+                "temperature": temperature,
+                "smart": smart,
+                "label": label,
+                "css": css,
+                "raw": raw,
+            })
+
+        if any(row.get("css") == "bad" for row in host_rows):
+            host_label = "CRITICAL"
+            host_css = "bad"
+        elif any(
+            row.get("css") == "warning"
+            for row in host_rows
+        ):
+            host_label = "WARNING"
+            host_css = "warning"
+        elif any(
+            row.get("label") == "UNKNOWN"
+            for row in host_rows
+        ):
+            host_label = "UNKNOWN"
+            host_css = "info"
+        elif any(
+            row.get("label") == "INFO"
+            for row in host_rows
+        ):
+            host_label = "INFO"
+            host_css = "info"
+        else:
+            host_label = "OK"
+            host_css = "ok"
+
+        statuses[host_key] = {
+            **base_status,
+            "pool_count": len(host_rows),
+            "label": host_label,
+            "css": host_css,
+            "reachable": True,
+            "raw": f"{len(host_rows)} pools checked",
+        }
+        rows.extend(host_rows)
+
+    return rows, statuses, errors
+
+
+def build_config_truenas_disk_health_preview(
+    hosts,
+    rows,
+    statuses,
+):
+    if not hosts:
+        return ""
+
+    statuses = statuses or {}
+    rows_by_host = {}
+
+    for row in rows or []:
+        rows_by_host.setdefault(
+            row.get("host_key"),
+            [],
+        ).append(row)
+
+    table_rows = ""
+    checked_count = 0
+    not_checked_count = 0
+
+    for host in sorted(
+        hosts,
+        key=configured_host_sort_key,
+    ):
+        host_key = host["key"]
+        host_name = host.get(
+            "display_name",
+            "Configured TrueNAS",
+        )
+        status = statuses.get(
+            host_key,
+            {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "disk-health status unavailable",
+            },
+        )
+        host_rows = rows_by_host.get(host_key, [])
+
+        if status.get("label") == "NOT CHECKED":
+            not_checked_count += 1
+        else:
+            checked_count += 1
+
+        if not host_rows:
+            table_rows += f"""
+      <tr class="{h(status.get("css", "info"))}">
+        <td>{badge(status.get("label", "UNKNOWN"), status.get("css", "info"))}</td>
+        <td>{h(host_name)}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>{h(status.get("raw", "-"))}</td>
+      </tr>
+"""
+            continue
+
+        for row in host_rows:
+            temperature = row.get("temperature") or {}
+            smart = row.get("smart") or {}
+
+            table_rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+        <td>{h(host_name)}</td>
+        <td><strong>{h(row.get("pool_name", "-"))}</strong></td>
+        <td>{badge(temperature.get("label", "UNKNOWN"), temperature.get("css", "info"))}<br><span class="muted-small">{h(temperature.get("raw", "-"))}</span></td>
+        <td>{badge(smart.get("label", "UNKNOWN"), smart.get("css", "info"))}<br><span class="muted-small">{h(smart.get("raw", "-"))}</span></td>
+        <td>{h(row.get("raw", "-"))}</td>
+      </tr>
+"""
+
+    host_count = len(hosts)
+    pool_count = len(rows or [])
+    host_word = "host" if host_count == 1 else "hosts"
+    pool_word = "pool" if pool_count == 1 else "pools"
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured TrueNAS Disk Health</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(pool_count)} {h(pool_word)} · {h(checked_count)} checked · {h(not_checked_count)} not checked</div>
+    </div>
+    <p class="muted-small">Live pool temperature and SMART checks are active for eligible TrueNAS hosts with modules.temperatures or modules.smart enabled. These results affect the Storage card but do not affect Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Result</th>
+        <th>Host</th>
+        <th>Pool</th>
+        <th>Temperature</th>
+        <th>SMART</th>
+        <th>Details</th>
+      </tr>
+      {table_rows}
+    </table>
+  </div>
+"""
+
+
 def build_configured_hosts_preview(hosts, web_statuses=None):
     if not hosts:
         return ""
@@ -5141,11 +6186,17 @@ def build_public_storage_summary_card(
     statuses,
     pool_rows=None,
     pool_host_statuses=None,
+    disk_health_rows=None,
+    disk_health_host_statuses=None,
 ):
     checks = checks or []
     statuses = statuses or {}
     pool_rows = pool_rows or []
     pool_host_statuses = pool_host_statuses or {}
+    disk_health_rows = disk_health_rows or []
+    disk_health_host_statuses = (
+        disk_health_host_statuses or {}
+    )
 
     row_host_keys = {
         row.get("host_key")
@@ -5166,10 +6217,31 @@ def build_public_storage_summary_card(
         and status.get("label") != "NOT CHECKED"
     ]
 
+    disk_row_host_keys = {
+        row.get("host_key")
+        for row in disk_health_rows
+        if row.get("host_key")
+    }
+
+    disk_host_only_statuses = [
+        status
+        for host_key, status in sorted(
+            disk_health_host_statuses.items(),
+            key=lambda item: str(
+                item[1].get("display_name")
+                or item[0]
+            ).lower(),
+        )
+        if host_key not in disk_row_host_keys
+        and status.get("label") != "NOT CHECKED"
+    ]
+
     if (
         not checks
         and not pool_rows
         and not pool_host_only_statuses
+        and not disk_health_rows
+        and not disk_host_only_statuses
     ):
         return build_public_summary_card(
             "Storage",
@@ -5258,6 +6330,32 @@ def build_public_storage_summary_card(
             status.get("css", "info"),
         )
 
+    for row in disk_health_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        pool_name = row.get("pool_name") or "Unknown pool"
+
+        add_result(
+            f"{host_name} · {pool_name} disk health",
+            row.get("label", "UNKNOWN"),
+            row.get("css", "info"),
+        )
+
+    for status in disk_host_only_statuses:
+        add_result(
+            (
+                status.get("display_name")
+                or status.get("host_id")
+                or "Configured TrueNAS"
+            )
+            + " disk health",
+            status.get("label", "UNKNOWN"),
+            status.get("css", "info"),
+        )
+
     inventory_parts = []
 
     if checks:
@@ -5265,6 +6363,11 @@ def build_public_storage_summary_card(
 
     if pool_rows or pool_host_only_statuses:
         inventory_parts.append(f"{len(pool_rows)} Pools")
+
+    if disk_health_rows or disk_host_only_statuses:
+        inventory_parts.append(
+            f"{len(disk_health_rows)} Disk Health"
+        )
 
     value = (
         " · ".join(inventory_parts)
@@ -5373,6 +6476,8 @@ def build_public_four_card_summary_preview(
     system_info_statuses=None,
     pool_rows=None,
     pool_host_statuses=None,
+    disk_health_rows=None,
+    disk_health_host_statuses=None,
 ):
     builders = {
         "systems": lambda: build_public_systems_summary_card(
@@ -5387,15 +6492,28 @@ def build_public_four_card_summary_preview(
             local_storage_statuses,
             pool_rows,
             pool_host_statuses,
+            disk_health_rows,
+            disk_health_host_statuses,
         ),
-        "protection": lambda: build_public_protection_summary_card(protection_relationships, protection_statuses),
-        "services": lambda: build_public_services_summary_card(services, service_statuses),
+        "protection": lambda: build_public_protection_summary_card(
+            protection_relationships,
+            protection_statuses,
+        ),
+        "services": lambda: build_public_services_summary_card(
+            services,
+            service_statuses,
+        ),
     }
 
     requested = normalize_public_summary_cards(summary_cards)
-
-    cards_html = "\n".join(builders[card]() for card in requested)
-    active_cards = " · ".join(card.title() for card in requested)
+    cards_html = "\n".join(
+        builders[card]()
+        for card in requested
+    )
+    active_cards = " · ".join(
+        card.title()
+        for card in requested
+    )
 
     if promoted:
         return f"""
@@ -6794,6 +7912,48 @@ if eligible_pool_hosts:
         f"{len(config_truenas_pool_rows)}"
     )
 
+config_truenas_disk_health_hosts = (
+    normalize_config_truenas_disk_health_hosts(
+        CONFIG_HOSTS
+    )
+)
+(
+    config_truenas_disk_health_rows,
+    config_truenas_disk_health_statuses,
+    config_truenas_disk_health_errors,
+) = collect_config_truenas_disk_health(
+    config_truenas_disk_health_hosts
+)
+
+for error in config_truenas_disk_health_errors:
+    collection_errors.append(
+        ("Configured TrueNAS disk-health query", error)
+    )
+
+config_truenas_disk_health_preview_html = (
+    build_config_truenas_disk_health_preview(
+        config_truenas_disk_health_hosts,
+        config_truenas_disk_health_rows,
+        config_truenas_disk_health_statuses,
+    )
+)
+
+eligible_disk_health_hosts = [
+    host
+    for host in config_truenas_disk_health_hosts
+    if host.get("eligible")
+]
+
+if eligible_disk_health_hosts:
+    print(
+        "Configured TrueNAS disk-health hosts checked: "
+        f"{len(eligible_disk_health_hosts)}"
+    )
+    print(
+        "Configured TrueNAS disk-health pools discovered: "
+        f"{len(config_truenas_disk_health_rows)}"
+    )
+
 config_truenas_snapshot_hosts = normalize_config_truenas_snapshot_hosts(CONFIG_HOSTS)
 config_truenas_snapshot_rows, config_truenas_snapshot_errors = collect_config_truenas_snapshot_checks(
     config_truenas_snapshot_hosts,
@@ -7160,6 +8320,10 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     system_info_statuses=config_system_info_statuses,
     pool_rows=config_truenas_pool_rows,
     pool_host_statuses=config_truenas_pool_statuses,
+    disk_health_rows=config_truenas_disk_health_rows,
+    disk_health_host_statuses=(
+        config_truenas_disk_health_statuses
+    ),
 )
 
 if DASHBOARD_RUNTIME_MODE == "public":
@@ -7174,6 +8338,11 @@ if DASHBOARD_RUNTIME_MODE == "public":
     config_truenas_pool_preview_html = (
         promote_public_runtime_detail_html(
             config_truenas_pool_preview_html
+        )
+    )
+    config_truenas_disk_health_preview_html = (
+        promote_public_runtime_detail_html(
+            config_truenas_disk_health_preview_html
         )
     )
     config_truenas_snapshot_preview_html = (
@@ -8113,6 +9282,8 @@ pre, .mono {{
   {config_system_info_preview_html}
 
   {config_truenas_pool_preview_html}
+
+  {config_truenas_disk_health_preview_html}
 
   {config_truenas_snapshot_preview_html}
 

@@ -72,6 +72,10 @@ collector:
 # For enabled type: truenas hosts:
 # - modules.pools: true activates live pool inventory, capacity,
 #   allocation percentage, and conservative ZFS health checks
+# - modules.temperatures: true activates pool-level average and maximum
+#   disk-temperature checks using zpool device mapping
+# - modules.smart: true activates conservative per-device SMART health
+#   checks summarized at pool level
 # - modules.snapshots: true activates live periodic snapshot-task and
 #   latest-snapshot freshness checks
 # - modules.replications: true activates live replication-task and
@@ -107,6 +111,8 @@ hosts:
     modules:
       system_info: true          # collect generic host telemetry
       pools: true                # live pool capacity and health check
+      temperatures: true         # live pool disk-temperature summaries
+      smart: true                # conservative pool SMART health check
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
       apps: true                 # true/false
@@ -139,6 +145,8 @@ hosts:
     modules:
       system_info: true          # collect generic host telemetry
       pools: true                # live pool capacity and health check
+      temperatures: true         # live pool disk-temperature summaries
+      smart: true                # conservative pool SMART health check
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
       apps: false                # true/false

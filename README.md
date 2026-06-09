@@ -46,7 +46,7 @@ The Phase 2F closure baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **212 deterministic standard-library regression tests**
+- **227 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, and Phase 3C.3 adds configuration-driven TrueNAS pool capacity and health without changing the reference runtime.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, and Phase 3C.4 adds configuration-driven TrueNAS temperature and SMART health without changing the reference runtime.
 
 ---
 
@@ -243,11 +243,13 @@ That file is intentionally self-documenting. It uses:
 
 The goal is that users should be able to describe their own homelab without editing the Python code.
 
-Completed Phase 2F configuration-driven behavior:
+Completed configuration-driven behavior:
 
 - configured hosts appear in the Systems summary card and the Configured Hosts detail table
 - enabled hosts with `modules.system_info: true` can report hostname, OS, kernel, uptime, CPU, memory, load, and host-type-aware Apps or Containers activity
 - enabled TrueNAS hosts with `modules.pools: true` can report live pool inventory, capacity, usage, and ZFS health
+- enabled TrueNAS hosts with `modules.temperatures: true` can report pool-level average and maximum disk temperatures
+- enabled TrueNAS hosts with `modules.smart: true` can report conservative per-device SMART health summarized by pool
 - collector-local system information requires no SSH credentials
 - eligible remote Linux and TrueNAS system-information checks use each host's explicit SSH identity
 - system-information reachability can improve the Systems summary card without changing global Overall Status
@@ -406,6 +408,64 @@ Configured TrueNAS Pools Runtime Detail table. Pool severity
 affects the Storage card, but it does not yet contribute to
 global Overall Status. Unified severity remains assigned to
 Phase 3C.6.
+
+### TrueNAS temperature and SMART checks
+
+Temperature and SMART monitoring can be enabled independently for
+each TrueNAS host:
+
+```yaml
+hosts:
+  - id: truenas-main
+    enabled: true
+    type: truenas
+    address: 192.168.1.20
+
+    ssh:
+      enabled: true
+      user: truenas_admin
+      key_file: /app/ssh/id_ed25519
+
+    modules:
+      temperatures: true
+      smart: true
+```
+
+Both modules require:
+
+- an enabled host with `type: truenas`
+- a non-empty host address
+- `ssh.enabled: true`
+- non-empty `ssh.user` and `ssh.key_file`
+- a working SSH identity available to the Sanity Node runtime
+
+`modules.temperatures` maps the physical devices reported by
+`zpool status -P` to values returned by
+`midclt call disk.temperatures`. Each pool reports its average and
+maximum available disk temperature.
+
+Temperature severity follows the reference-runtime thresholds:
+
+- SATA and SAS pools report `INFO` at 50°C and `WARNING` at 58°C
+- NVMe pools report `INFO` at 60°C and `WARNING` at 70°C
+- missing or malformed temperature data reports `UNKNOWN`
+
+`modules.smart` maps the same pool devices to conservative
+`smartctl -H` checks. Explicit SMART failure or a non-zero NVMe
+critical-warning value reports `CRITICAL`. Explicitly healthy
+results report `OK`. Unsupported devices, unavailable SMART data,
+permission problems, and unrecognized output report `UNKNOWN`
+rather than inventing a healthy result.
+
+When both modules are enabled, the pool-level disk-health result
+uses worst-severity precedence:
+
+`CRITICAL` → `WARNING` → `UNKNOWN` → `INFO` → `OK`
+
+Disk-health rows appear in the public Storage summary and in the
+Configured TrueNAS Disk Health Runtime Detail table. These results
+affect the Storage card but do not yet contribute to global Overall
+Status. Unified severity remains assigned to Phase 3C.6.
 
 ### TrueNAS snapshot checks
 

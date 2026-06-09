@@ -104,8 +104,8 @@ Those two flags require later clarification, deprecation, or removal.
 | TrueNAS pool inventory | Reference-only | Missing | Operationalize `modules.pools` |
 | Pool size and capacity | Reference-only | Missing | Add generic capacity collection |
 | ZFS pool health | Reference-only | Missing | Add health status and severity |
-| Pool temperatures | Reference-only | Missing | Generalize temperature collection |
-| SMART health | Reference-only | Missing | Generalize disk mapping and SMART checks |
+| Pool temperatures | Implemented | Supported | Completed in Phase 3C.4 |
+| SMART health | Implemented | Supported | Completed in Phase 3C.4 |
 | Local and remote filesystem capacity | Implemented | Supported | Connect to unified severity |
 | Backup marker and timer checks | Implemented | Partial | Connect to unified severity |
 | Snapshot task and freshness checks | Implemented | Partial | Connect to unified severity |
@@ -267,6 +267,33 @@ two TrueNAS hosts with seven pools discovered, deterministic faulted-pool
 severity testing, public/reference isolation, and unchanged production
 dashboard output.
 
+## Phase 3C.4 completion
+
+Phase 3C.4 operationalized configuration-driven TrueNAS temperature
+and SMART monitoring while preserving the reference runtime unchanged.
+
+The public runtime now supports:
+
+- independent `modules.temperatures` and `modules.smart` switches;
+- enabled TrueNAS hosts with explicit host-specific SSH identities;
+- pool-to-device mapping through `zpool status -P`;
+- temperature collection through `midclt call disk.temperatures`;
+- pool-level average and maximum temperature summaries;
+- separate SATA/SAS and NVMe temperature thresholds;
+- conservative `smartctl -H` health classification;
+- explicit SMART and NVMe failures reported as `CRITICAL`;
+- unavailable or unrecognized SMART data reported as `UNKNOWN`;
+- worst-severity aggregation across temperature and SMART results;
+- public Storage-card integration;
+- a promoted TrueNAS disk-health runtime detail table;
+- validator and startup-preflight enforcement;
+- deterministic regression coverage for collection, parsing,
+  classification, rendering, configuration gates, and SSH requirements.
+
+Temperature and SMART results intentionally do not contribute to global
+Overall Status yet. That severity boundary remains assigned to
+Phase 3C.6.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -279,6 +306,7 @@ dashboard output.
                  Complete
 
     Phase 3C.4  Config-driven TrueNAS temperature and SMART parity
+                 Complete
 
     Phase 3C.5  Data-protection severity parity
 

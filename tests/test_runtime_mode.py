@@ -344,6 +344,109 @@ image_updates:
         self.assertIn("hosts[1].ssh", output)
         self.assertIn("modules.pools", output)
 
+    def test_disk_health_modules_require_truenas_host_type(self):
+        for module_name in ("temperatures", "smart"):
+            with self.subTest(module=module_name):
+                result = self.validate(
+                    f"""
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: storage
+    enabled: true
+    display_name: Storage
+    hostname: storage
+    address: 192.0.2.30
+    type: linux
+    modules:
+      {module_name}: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+                )
+                output = result.stdout + result.stderr
+
+                self.assertEqual(
+                    result.returncode,
+                    1,
+                    output,
+                )
+                self.assertIn(
+                    f"hosts[1].modules.{module_name}",
+                    output,
+                )
+                self.assertIn(
+                    "requires host type: truenas",
+                    output,
+                )
+
+    def test_disk_health_modules_require_explicit_ssh(self):
+        result = self.validate(
+            """
+dashboard:
+  runtime_mode: public
+collector:
+  id: collector
+  display_name: Collector
+  hostname: collector
+  type: linux
+hosts:
+  - id: collector
+    enabled: true
+    display_name: Collector
+    hostname: collector
+    type: linux
+    modules:
+      system_info: true
+  - id: storage
+    enabled: true
+    display_name: Storage
+    hostname: storage
+    address: 192.0.2.30
+    type: truenas
+    modules:
+      temperatures: true
+      smart: true
+services: []
+local_storage: []
+backup_checks: []
+protection: []
+image_updates:
+  enabled: false
+  sources: []
+"""
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("hosts[1].ssh", output)
+        self.assertIn(
+            "modules.temperatures and modules.smart",
+            output,
+        )
+        self.assertEqual(
+            output.count("hosts[1].ssh:"),
+            1,
+            output,
+        )
+
 
 class RuntimeModeFullRenderTests(unittest.TestCase):
     def render_starter(self, runtime_mode):
