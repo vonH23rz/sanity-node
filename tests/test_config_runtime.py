@@ -51,6 +51,17 @@ FUNCTIONS_UNDER_TEST = {
     "parse_config_truenas_pool_payload",
     "collect_config_truenas_pools",
     "build_config_truenas_pool_preview",
+    "normalize_config_truenas_disk_health_hosts",
+    "config_temperature_number",
+    "config_truenas_temperature_command",
+    "config_truenas_smart_command",
+    "parse_config_truenas_temperature_payload",
+    "parse_config_truenas_smart_payload",
+    "config_temperature_status",
+    "config_smart_pool_status",
+    "config_disk_health_result",
+    "collect_config_truenas_disk_health",
+    "build_config_truenas_disk_health_preview",
     "config_percent",
     "normalize_config_local_storage_checks",
     "config_local_storage_status",
@@ -226,6 +237,39 @@ collect_config_truenas_pools = FUNCTIONS[
 ]
 build_config_truenas_pool_preview = FUNCTIONS[
     "build_config_truenas_pool_preview"
+]
+normalize_config_truenas_disk_health_hosts = FUNCTIONS[
+    "normalize_config_truenas_disk_health_hosts"
+]
+config_temperature_number = FUNCTIONS[
+    "config_temperature_number"
+]
+config_truenas_temperature_command = FUNCTIONS[
+    "config_truenas_temperature_command"
+]
+config_truenas_smart_command = FUNCTIONS[
+    "config_truenas_smart_command"
+]
+parse_config_truenas_temperature_payload = FUNCTIONS[
+    "parse_config_truenas_temperature_payload"
+]
+parse_config_truenas_smart_payload = FUNCTIONS[
+    "parse_config_truenas_smart_payload"
+]
+config_temperature_status = FUNCTIONS[
+    "config_temperature_status"
+]
+config_smart_pool_status = FUNCTIONS[
+    "config_smart_pool_status"
+]
+config_disk_health_result = FUNCTIONS[
+    "config_disk_health_result"
+]
+collect_config_truenas_disk_health = FUNCTIONS[
+    "collect_config_truenas_disk_health"
+]
+build_config_truenas_disk_health_preview = FUNCTIONS[
+    "build_config_truenas_disk_health_preview"
 ]
 config_percent = FUNCTIONS[
     "config_percent"
@@ -6095,3 +6139,572 @@ class SystemsSummaryHostHealthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ConfiguredTrueNASDiskHealthRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def host(**overrides):
+        host = {
+            "id": "nas",
+            "enabled": True,
+            "display_name": "Storage Node",
+            "hostname": "storage-node",
+            "address": "192.0.2.30",
+            "type": "truenas",
+            "ssh": {
+                "enabled": True,
+                "user": "monitor",
+                "key_file": "/app/ssh/storage-node",
+            },
+            "modules": {
+                "temperatures": True,
+                "smart": True,
+            },
+        }
+
+        host.update(overrides)
+        return host
+
+    def test_normalizer_supports_independent_modules_and_gates(self):
+        hosts = [
+            self.host(id="both"),
+            self.host(
+                id="temperature-only",
+                modules={
+                    "temperatures": True,
+                    "smart": False,
+                },
+            ),
+            self.host(
+                id="smart-only",
+                modules={
+                    "temperatures": False,
+                    "smart": True,
+                },
+            ),
+            self.host(
+                id="wrong-type",
+                type="linux",
+            ),
+            self.host(
+                id="missing-ssh",
+                ssh={"enabled": False},
+            ),
+            self.host(
+                id="disabled",
+                enabled=False,
+            ),
+            self.host(
+                id="no-modules",
+                modules={
+                    "temperatures": False,
+                    "smart": False,
+                },
+            ),
+        ]
+
+        normalized = normalize_config_truenas_disk_health_hosts(
+            hosts
+        )
+        by_id = {
+            host["id"]: host
+            for host in normalized
+        }
+
+        self.assertEqual(
+            set(by_id),
+            {
+                "both",
+                "temperature-only",
+                "smart-only",
+                "wrong-type",
+                "missing-ssh",
+                "disabled",
+            },
+        )
+
+        self.assertTrue(by_id["both"]["eligible"])
+        self.assertTrue(
+            by_id["temperature-only"]["temperatures_enabled"]
+        )
+        self.assertFalse(
+            by_id["temperature-only"]["smart_enabled"]
+        )
+        self.assertFalse(
+            by_id["smart-only"]["temperatures_enabled"]
+        )
+        self.assertTrue(by_id["smart-only"]["smart_enabled"])
+        self.assertFalse(by_id["wrong-type"]["eligible"])
+        self.assertFalse(by_id["missing-ssh"]["eligible"])
+        self.assertFalse(by_id["disabled"]["eligible"])
+
+    def test_remote_commands_are_generic_and_host_independent(self):
+        temperature_command = (
+            config_truenas_temperature_command()
+        )
+        smart_command = config_truenas_smart_command()
+
+        self.assertIn("disk.temperatures", temperature_command)
+        self.assertIn("zpool", temperature_command)
+        self.assertIn("status", temperature_command)
+
+        self.assertIn("smartctl", smart_command)
+        self.assertIn("zpool", smart_command)
+        self.assertIn("status", smart_command)
+
+        for command in (
+            temperature_command,
+            smart_command,
+        ):
+            self.assertNotIn("192.168.", command)
+            self.assertNotIn("/home/controls", command)
+            self.assertNotIn("truenas_admin@", command)
+
+    def test_temperature_payload_parser_normalizes_values(self):
+        pools, error = (
+            parse_config_truenas_temperature_payload(
+                json.dumps({
+                    "error": None,
+                    "pools": {
+                        "tank": {
+                            "devices": [
+                                "sdb",
+                                "sda",
+                                "sdb",
+                                "",
+                            ],
+                            "avg": 42.25,
+                            "max": "51",
+                        },
+                    },
+                })
+            )
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            pools["tank"]["devices"],
+            ["sda", "sdb"],
+        )
+        self.assertEqual(pools["tank"]["avg"], 42.2)
+        self.assertEqual(pools["tank"]["max"], 51.0)
+
+        pools, error = (
+            parse_config_truenas_temperature_payload(
+                "not-json"
+            )
+        )
+
+        self.assertEqual(pools, {})
+        self.assertIn("invalid temperature JSON", error)
+
+    def test_smart_payload_parser_fails_closed(self):
+        pools, error = parse_config_truenas_smart_payload(
+            json.dumps({
+                "error": None,
+                "pools": {
+                    "tank": {
+                        "devices": [
+                            {
+                                "device": "sda",
+                                "state": "OK",
+                                "note": "SMART passed",
+                            },
+                            {
+                                "device": "sdb",
+                                "state": "surprising",
+                                "note": "unexpected state",
+                            },
+                            "invalid-device-entry",
+                        ],
+                    },
+                },
+            })
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            pools["tank"]["devices"][0]["state"],
+            "OK",
+        )
+        self.assertEqual(
+            pools["tank"]["devices"][1]["state"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            len(pools["tank"]["devices"]),
+            2,
+        )
+
+        pools, error = parse_config_truenas_smart_payload(
+            json.dumps([])
+        )
+
+        self.assertEqual(pools, {})
+        self.assertIn("did not return a mapping", error)
+
+    def test_temperature_thresholds_match_reference_semantics(self):
+        sata = {
+            "devices": ["sda"],
+            "avg": 40,
+            "max": 49,
+        }
+        self.assertEqual(
+            config_temperature_status(
+                "tank",
+                sata,
+            )["label"],
+            "OK",
+        )
+
+        sata["max"] = 50
+        self.assertEqual(
+            config_temperature_status(
+                "tank",
+                sata,
+            )["label"],
+            "INFO",
+        )
+
+        sata["max"] = 58
+        self.assertEqual(
+            config_temperature_status(
+                "tank",
+                sata,
+            )["label"],
+            "WARNING",
+        )
+
+        nvme = {
+            "devices": ["nvme0n1"],
+            "avg": 50,
+            "max": 59,
+        }
+        self.assertEqual(
+            config_temperature_status(
+                "fast",
+                nvme,
+            )["label"],
+            "OK",
+        )
+
+        nvme["max"] = 60
+        self.assertEqual(
+            config_temperature_status(
+                "fast",
+                nvme,
+            )["label"],
+            "INFO",
+        )
+
+        nvme["max"] = 70
+        self.assertEqual(
+            config_temperature_status(
+                "fast",
+                nvme,
+            )["label"],
+            "WARNING",
+        )
+
+    def test_smart_classification_uses_conservative_precedence(self):
+        ok = config_smart_pool_status({
+            "devices": [
+                {
+                    "device": "sda",
+                    "state": "OK",
+                    "note": "passed",
+                },
+            ],
+        })
+        self.assertEqual(ok["label"], "OK")
+
+        unknown = config_smart_pool_status({
+            "devices": [
+                {
+                    "device": "sda",
+                    "state": "OK",
+                    "note": "passed",
+                },
+                {
+                    "device": "sdb",
+                    "state": "UNKNOWN",
+                    "note": "unavailable",
+                },
+            ],
+        })
+        self.assertEqual(unknown["label"], "UNKNOWN")
+
+        critical = config_smart_pool_status({
+            "devices": [
+                {
+                    "device": "sda",
+                    "state": "UNKNOWN",
+                    "note": "unavailable",
+                },
+                {
+                    "device": "sdb",
+                    "state": "CRITICAL",
+                    "note": "SMART health failed",
+                },
+            ],
+        })
+        self.assertEqual(critical["label"], "CRITICAL")
+        self.assertEqual(critical["css"], "bad")
+
+    def test_combined_disk_health_uses_worst_severity(self):
+        temperature = {
+            "label": "WARNING",
+            "css": "warning",
+            "raw": "58°C max",
+        }
+        smart = {
+            "label": "OK",
+            "css": "ok",
+            "raw": "SMART passed",
+        }
+
+        label, css, raw = config_disk_health_result(
+            temperature,
+            smart,
+            True,
+            True,
+        )
+
+        self.assertEqual(label, "WARNING")
+        self.assertEqual(css, "warning")
+        self.assertIn("Temperature", raw)
+        self.assertIn("SMART", raw)
+
+        smart["label"] = "CRITICAL"
+        smart["css"] = "bad"
+        smart["raw"] = "SMART failed"
+
+        label, css, _ = config_disk_health_result(
+            temperature,
+            smart,
+            True,
+            True,
+        )
+
+        self.assertEqual(label, "CRITICAL")
+        self.assertEqual(css, "bad")
+
+    def test_collector_honors_enabled_modules(self):
+        normalized = normalize_config_truenas_disk_health_hosts([
+            self.host(),
+        ])
+        calls = []
+
+        def fake_ssh(host, command, timeout=30):
+            calls.append((host["id"], command, timeout))
+
+            if "disk.temperatures" in command:
+                return 0, json.dumps({
+                    "error": None,
+                    "pools": {
+                        "tank": {
+                            "devices": ["sda"],
+                            "avg": 40,
+                            "max": 42,
+                        },
+                    },
+                })
+
+            if "smartctl" in command:
+                return 0, json.dumps({
+                    "error": None,
+                    "pools": {
+                        "tank": {
+                            "devices": [
+                                {
+                                    "device": "sda",
+                                    "state": "OK",
+                                    "note": "SMART passed",
+                                },
+                            ],
+                        },
+                    },
+                })
+
+            raise AssertionError("unexpected remote command")
+
+        original = FUNCTIONS["run_config_host_ssh"]
+        FUNCTIONS["run_config_host_ssh"] = fake_ssh
+
+        try:
+            rows, statuses, errors = (
+                collect_config_truenas_disk_health(
+                    normalized
+                )
+            )
+        finally:
+            FUNCTIONS["run_config_host_ssh"] = original
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pool_name"], "tank")
+        self.assertEqual(rows[0]["label"], "OK")
+        self.assertEqual(statuses["nas"]["label"], "OK")
+
+    def test_collector_skips_disabled_subcollector(self):
+        normalized = normalize_config_truenas_disk_health_hosts([
+            self.host(
+                modules={
+                    "temperatures": True,
+                    "smart": False,
+                },
+            ),
+        ])
+        calls = []
+
+        def fake_ssh(host, command, timeout=30):
+            calls.append(command)
+            self.assertIn("disk.temperatures", command)
+
+            return 0, json.dumps({
+                "error": None,
+                "pools": {
+                    "tank": {
+                        "devices": ["sda"],
+                        "avg": 40,
+                        "max": 42,
+                    },
+                },
+            })
+
+        original = FUNCTIONS["run_config_host_ssh"]
+        FUNCTIONS["run_config_host_ssh"] = fake_ssh
+
+        try:
+            rows, statuses, errors = (
+                collect_config_truenas_disk_health(
+                    normalized
+                )
+            )
+        finally:
+            FUNCTIONS["run_config_host_ssh"] = original
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(rows[0]["label"], "OK")
+        self.assertEqual(
+            rows[0]["smart"]["label"],
+            "NOT CHECKED",
+        )
+        self.assertEqual(statuses["nas"]["label"], "OK")
+
+    def test_transport_timeout_is_unreachable(self):
+        normalized = normalize_config_truenas_disk_health_hosts([
+            self.host(
+                modules={
+                    "temperatures": True,
+                    "smart": False,
+                },
+            ),
+        ])
+
+        def fake_ssh(host, command, timeout=30):
+            return None, "Command timed out"
+
+        original = FUNCTIONS["run_config_host_ssh"]
+        FUNCTIONS["run_config_host_ssh"] = fake_ssh
+
+        try:
+            rows, statuses, errors = (
+                collect_config_truenas_disk_health(
+                    normalized
+                )
+            )
+        finally:
+            FUNCTIONS["run_config_host_ssh"] = original
+
+        self.assertEqual(rows, [])
+        self.assertEqual(
+            statuses["nas"]["label"],
+            "UNREACHABLE",
+        )
+        self.assertEqual(statuses["nas"]["css"], "bad")
+        self.assertEqual(len(errors), 1)
+
+    def test_preview_is_generic_and_html_safe(self):
+        hosts = normalize_config_truenas_disk_health_hosts([
+            self.host(
+                id="nas<script>",
+                display_name="Storage <Node>",
+            ),
+        ])
+        rows = [{
+            "host_id": "nas<script>",
+            "host_key": "nas<script>",
+            "host_name": "Storage <Node>",
+            "pool_name": "tank<script>",
+            "temperature": {
+                "label": "INFO",
+                "css": "info",
+                "raw": "50°C <warm>",
+            },
+            "smart": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "SMART passed",
+            },
+            "label": "INFO",
+            "css": "info",
+            "raw": "temperature <warm>",
+        }]
+        statuses = {
+            "nas<script>": {
+                "display_name": "Storage <Node>",
+                "label": "INFO",
+                "css": "info",
+                "raw": "one pool",
+            },
+        }
+
+        html_output = (
+            build_config_truenas_disk_health_preview(
+                hosts,
+                rows,
+                statuses,
+            )
+        )
+
+        self.assertIn(
+            "Configured TrueNAS Disk Health",
+            html_output,
+        )
+        self.assertIn("Storage &lt;Node&gt;", html_output)
+        self.assertIn("tank&lt;script&gt;", html_output)
+        self.assertIn("&lt;warm&gt;", html_output)
+        self.assertNotIn("<script>", html_output)
+        self.assertNotIn("192.168.30.", html_output)
+
+    def test_disk_health_extends_storage_summary(self):
+        card = build_public_storage_summary_card(
+            [],
+            {},
+            [],
+            {},
+            [{
+                "host_key": "nas",
+                "host_name": "Storage Node",
+                "pool_name": "tank",
+                "label": "CRITICAL",
+                "css": "bad",
+            }],
+            {
+                "nas": {
+                    "display_name": "Storage Node",
+                    "label": "CRITICAL",
+                    "css": "bad",
+                },
+            },
+        )
+
+        self.assertIn("1 Disk Health", card)
+        self.assertIn("1 CRITICAL", card)
+        self.assertIn("summary-card bad", card)
+        self.assertIn(
+            "Storage Node · tank disk health",
+            card,
+        )

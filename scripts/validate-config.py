@@ -398,6 +398,48 @@ def validate_config(config: dict) -> Validator:
                             "must be true when modules.pools is true",
                         )
 
+            disk_health_modules = [
+                module_name
+                for module_name in (
+                    "temperatures",
+                    "smart",
+                )
+                if (
+                    isinstance(modules, dict)
+                    and modules.get(module_name) is True
+                )
+            ]
+
+            if enabled and disk_health_modules:
+                if (
+                    host_type is None
+                    or host_type.lower() != "truenas"
+                ):
+                    for module_name in disk_health_modules:
+                        validator.error(
+                            f"{path}.modules.{module_name}",
+                            "requires host type: truenas",
+                        )
+                else:
+                    module_text = " and ".join(
+                        f"modules.{module_name}"
+                        for module_name in disk_health_modules
+                    )
+                    ssh_value = host.get("ssh")
+
+                    if not isinstance(ssh_value, dict):
+                        validator.error(
+                            f"{path}.ssh",
+                            f"is required when {module_text} "
+                            "is true",
+                        )
+                    elif ssh_value.get("enabled") is not True:
+                        validator.error(
+                            f"{path}.ssh.enabled",
+                            f"must be true when {module_text} "
+                            "is true",
+                        )
+
         if not enabled_host_ids:
             validator.error("hosts", "must contain at least one enabled host")
 

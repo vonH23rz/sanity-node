@@ -109,6 +109,12 @@ def collect_ssh_requirements(config):
             if modules.get("pools") is True:
                 add(host_id, "TrueNAS pool monitoring")
 
+            if modules.get("temperatures") is True:
+                add(host_id, "TrueNAS temperature monitoring")
+
+            if modules.get("smart") is True:
+                add(host_id, "TrueNAS SMART monitoring")
+
             if modules.get("snapshots") is True:
                 add(host_id, "TrueNAS snapshot monitoring")
 

@@ -687,6 +687,122 @@ class StartupPreflightTests(unittest.TestCase):
             dockerfile,
         )
 
+    def test_truenas_disk_health_modules_require_ssh(self):
+        config = self.minimal_config()
+        config["hosts"].extend(
+            [
+                {
+                    "id": "temperature-host",
+                    "enabled": True,
+                    "display_name": "Temperature Host",
+                    "hostname": "temperature-host",
+                    "address": "192.0.2.31",
+                    "type": "truenas",
+                    "modules": {
+                        "temperatures": True,
+                        "smart": False,
+                    },
+                },
+                {
+                    "id": "smart-host",
+                    "enabled": True,
+                    "display_name": "SMART Host",
+                    "hostname": "smart-host",
+                    "address": "192.0.2.32",
+                    "type": "truenas",
+                    "modules": {
+                        "temperatures": False,
+                        "smart": True,
+                    },
+                },
+                {
+                    "id": "both-host",
+                    "enabled": True,
+                    "display_name": "Both Host",
+                    "hostname": "both-host",
+                    "address": "192.0.2.33",
+                    "type": "truenas",
+                    "modules": {
+                        "temperatures": True,
+                        "smart": True,
+                    },
+                },
+                {
+                    "id": "disabled-disk-health",
+                    "enabled": True,
+                    "display_name": "Disabled Disk Health",
+                    "hostname": "disabled-disk-health",
+                    "address": "192.0.2.34",
+                    "type": "truenas",
+                    "modules": {
+                        "temperatures": False,
+                        "smart": False,
+                    },
+                },
+            ]
+        )
+
+        requirements = PREFLIGHT.collect_ssh_requirements(
+            config
+        )
+
+        self.assertEqual(
+            requirements["temperature-host"],
+            ["TrueNAS temperature monitoring"],
+        )
+        self.assertEqual(
+            requirements["smart-host"],
+            ["TrueNAS SMART monitoring"],
+        )
+        self.assertEqual(
+            requirements["both-host"],
+            [
+                "TrueNAS SMART monitoring",
+                "TrueNAS temperature monitoring",
+            ],
+        )
+        self.assertNotIn(
+            "disabled-disk-health",
+            requirements,
+        )
+
+        runtime = self.make_runtime(config)
+        temporary, config_path, output_path, log_path = runtime
+        self.addCleanup(temporary.cleanup)
+
+        requirements, errors = PREFLIGHT.run_preflight(
+            config_path,
+            output_path,
+            log_path,
+        )
+
+        self.assertEqual(
+            requirements["both-host"],
+            [
+                "TrueNAS SMART monitoring",
+                "TrueNAS temperature monitoring",
+            ],
+        )
+        self.assertIn(
+            "host 'Temperature Host' requires SSH for "
+            "TrueNAS temperature monitoring, "
+            "but its ssh section is missing or disabled",
+            errors,
+        )
+        self.assertIn(
+            "host 'SMART Host' requires SSH for "
+            "TrueNAS SMART monitoring, "
+            "but its ssh section is missing or disabled",
+            errors,
+        )
+        self.assertIn(
+            "host 'Both Host' requires SSH for "
+            "TrueNAS SMART monitoring, "
+            "TrueNAS temperature monitoring, "
+            "but its ssh section is missing or disabled",
+            errors,
+        )
+
 
 
 if __name__ == "__main__":
