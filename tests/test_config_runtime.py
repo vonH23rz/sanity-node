@@ -1348,6 +1348,45 @@ class RemoteLinuxBackupRuntimeTests(unittest.TestCase):
             statuses["local-backup"]["raw"],
         )
 
+    def test_collector_local_timer_query_error_is_warning(self):
+        marker_epoch = datetime.now().timestamp() - 3600
+        marker_path = mock.Mock()
+        marker_path.exists.return_value = True
+        marker_path.stat.return_value = SimpleNamespace(
+            st_mtime=marker_epoch,
+        )
+        path_factory = mock.Mock(return_value=marker_path)
+
+        normalized = normalize_config_backup_checks(
+            [
+                self.check(
+                    id="local-backup",
+                    host="collector",
+                    marker_file="/tmp/local-backup.marker",
+                )
+            ],
+            [],
+        )
+
+        with mock.patch.dict(
+            collect_config_backup_checks.__globals__,
+            {"Path": path_factory},
+        ), mock.patch.object(
+            subprocess,
+            "run",
+            side_effect=TimeoutError("timer query timed out"),
+        ):
+            statuses = collect_config_backup_checks(normalized)
+
+        status = statuses["local-backup"]
+
+        self.assertEqual(status["label"], "WARNING")
+        self.assertEqual(status["css"], "warning")
+        self.assertIn(
+            "timer unknown: timer query timed out",
+            status["raw"],
+        )
+
     def test_remote_command_quotes_marker_and_reads_timer(self):
         normalized = normalize_config_backup_checks(
             [self.check()],
@@ -1497,6 +1536,7 @@ class RemoteLinuxBackupRuntimeTests(unittest.TestCase):
 
         status = statuses["remote-backup"]
         self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["css"], "warning")
         self.assertEqual(status["raw"], "Connection timed out")
 
     def test_remote_stat_failure_is_unknown(self):
@@ -1522,6 +1562,7 @@ class RemoteLinuxBackupRuntimeTests(unittest.TestCase):
 
         status = statuses["remote-backup"]
         self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["css"], "warning")
         self.assertIn("Permission denied", status["raw"])
 
     def test_remote_malformed_payload_is_unknown(self):
@@ -1547,6 +1588,7 @@ class RemoteLinuxBackupRuntimeTests(unittest.TestCase):
 
         status = statuses["remote-backup"]
         self.assertEqual(status["label"], "UNKNOWN")
+        self.assertEqual(status["css"], "warning")
         self.assertIn(
             "invalid remote marker timestamp",
             status["raw"],
@@ -3288,7 +3330,7 @@ class SnapshotCollectorTests(unittest.TestCase):
         self.assertEqual(rows[0]["dataset"], "tank/apps")
         self.assertTrue(rows[0]["task_enabled"])
         self.assertEqual(rows[0]["label"], "UNKNOWN")
-        self.assertEqual(rows[0]["css"], "info")
+        self.assertEqual(rows[0]["css"], "warning")
         self.assertEqual(
             rows[0]["raw"],
             "snapshot inventory query failed",
@@ -3533,7 +3575,7 @@ class ReplicationCollectorTests(unittest.TestCase):
         )
         self.assertEqual(zeta["execution_state"], "PAUSED")
         self.assertEqual(zeta["label"], "DISABLED")
-        self.assertEqual(zeta["css"], "disabled")
+        self.assertEqual(zeta["css"], "warning")
         self.assertEqual(
             zeta["raw"],
             "replication task disabled",
@@ -3566,7 +3608,7 @@ class SnapshotFreshnessStatusTests(unittest.TestCase):
             ),
             (
                 "DISABLED",
-                "disabled",
+                "warning",
                 "snapshot task disabled",
             ),
         )
@@ -3673,7 +3715,7 @@ class ReplicationStatusClassificationTests(unittest.TestCase):
             ),
             (
                 "DISABLED",
-                "disabled",
+                "warning",
                 "replication task disabled",
             ),
         )
@@ -4707,7 +4749,7 @@ class ProtectionReplicationOverlayTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "1 Relationships · 1 CONFIGURED · 0 INCOMPLETE",
+            "1 Relationship · 1 OK · 0 WARNING · 0 CRITICAL",
             card,
         )
         self.assertNotIn(" · 1 INFO", card)
@@ -4716,60 +4758,191 @@ class ProtectionReplicationOverlayTests(unittest.TestCase):
 
 class ProtectionSummaryCardTests(unittest.TestCase):
     def test_empty_protection_configuration_renders_info_card(self):
-        card = build_public_protection_summary_card([], {})
+        card = build_public_protection_summary_card(
+            [],
+            {},
+        )
 
         self.assertIn(
-            "No protection relationships configured yet",
+            "No protection checks configured yet",
             card,
         )
-        self.assertIn("summary-card info", card)
-        self.assertIn("protection", card)
+        self.assertIn(
+            "summary-card info",
+            card,
+        )
+        self.assertIn(
+            "protection",
+            card,
+        )
 
-    def test_protection_counts_and_bad_precedence(self):
-        relationships = [
-            {"id": "configured", "name": "Primary Backup"},
-            {"id": "incomplete", "name": "Archive Backup"},
-            {"id": "failed", "name": "Remote Backup"},
-            {"id": "unknown", "name": "Cold Backup"},
+    def test_aggregates_all_protection_domains(self):
+        backup_checks = [
+            {
+                "id": "backup-ok",
+                "name": "Utility Backup",
+            },
+            {
+                "id": "backup-missing",
+                "name": "Archive Backup",
+            },
         ]
-        statuses = {
+        backup_statuses = {
+            "backup-ok": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "current",
+            },
+            "backup-missing": {
+                "label": "MISSING",
+                "css": "bad",
+                "raw": "marker missing",
+            },
+        }
+        snapshot_rows = [
+            {
+                "host_id": "nas",
+                "host_name": "Primary NAS",
+                "dataset": "tank/apps",
+                "task_enabled": True,
+                "label": "OK",
+                "css": "ok",
+                "raw": "fresh enough",
+            },
+            {
+                "host_id": "nas",
+                "host_name": "Primary NAS",
+                "dataset": "tank/archive",
+                "task_enabled": False,
+                "label": "DISABLED",
+                "css": "warning",
+                "raw": "snapshot task disabled",
+            },
+        ]
+        replication_rows = [
+            {
+                "host_id": "nas",
+                "host_name": "Primary NAS",
+                "task_id": "1",
+                "name": "Running Copy",
+                "task_enabled": True,
+                "label": "RUNNING",
+                "css": "info",
+                "raw": (
+                    "replication task is running"
+                ),
+            },
+            {
+                "host_id": "nas",
+                "host_name": "Primary NAS",
+                "task_id": "2",
+                "name": "Failed Copy",
+                "task_enabled": True,
+                "label": "CRITICAL",
+                "css": "bad",
+                "raw": "remote transport failed",
+            },
+        ]
+        relationships = [
+            {
+                "id": "configured",
+                "name": "Primary Relationship",
+            },
+            {
+                "id": "incomplete",
+                "name": "Archive Relationship",
+            },
+        ]
+        relationship_statuses = {
             "configured": {
                 "label": "CONFIGURED",
-                "css": "ok",
-                "raw": "ready",
+                "css": "info",
+                "raw": "intent configured",
             },
             "incomplete": {
                 "label": "INCOMPLETE",
                 "css": "warning",
-                "raw": "missing dataset",
-            },
-            "failed": {
-                "label": "FAILED",
-                "css": "bad",
-                "raw": "task failed",
-            },
-            "unknown": {
-                "label": "UNKNOWN",
-                "css": "info",
-                "raw": "-",
+                "raw": "missing target",
             },
         }
 
         card = build_public_protection_summary_card(
             relationships,
-            statuses,
+            relationship_statuses,
+            backup_checks,
+            backup_statuses,
+            snapshot_rows,
+            replication_rows,
         )
 
         self.assertIn(
-            "4 Relationships · 1 CONFIGURED · 1 INCOMPLETE"
-            " · 1 BAD · 1 INFO",
+            "2 Backups · 2 Snapshots · "
+            "2 Replications · 2 Relationships · "
+            "2 OK · 2 WARNING · 2 CRITICAL · "
+            "2 INFO",
             card,
         )
-        self.assertIn("summary-card bad", card)
-        self.assertIn("Primary Backup", card)
-        self.assertIn("Archive Backup", card)
-        self.assertIn("Remote Backup", card)
-        self.assertIn("Cold Backup", card)
+        self.assertIn(
+            "summary-card bad",
+            card,
+        )
+        self.assertIn(
+            "service-details two-column",
+            card,
+        )
+        self.assertIn(
+            "Backup · Utility Backup",
+            card,
+        )
+        self.assertIn(
+            "Snapshot · Primary NAS · "
+            "tank/archive",
+            card,
+        )
+        self.assertIn(
+            "Replication · Primary NAS · "
+            "Failed Copy",
+            card,
+        )
+        self.assertIn(
+            "Relationship · Archive Relationship",
+            card,
+        )
+
+    def test_warning_precedence_without_critical_results(self):
+        card = build_public_protection_summary_card(
+            [],
+            {},
+            [
+                {
+                    "id": "backup-old",
+                    "name": "Old Backup",
+                }
+            ],
+            {
+                "backup-old": {
+                    "label": "OLD",
+                    "css": "warning",
+                    "raw": "marker too old",
+                }
+            },
+            [],
+            [],
+        )
+
+        self.assertIn(
+            "1 Backup · 0 OK · 1 WARNING · "
+            "0 CRITICAL",
+            card,
+        )
+        self.assertIn(
+            "summary-card warning",
+            card,
+        )
+        self.assertNotIn(
+            "summary-card bad",
+            card,
+        )
 
 
 class ServicesSummaryCardTests(unittest.TestCase):
@@ -4956,6 +5129,78 @@ class FourCardSummaryPreviewTests(unittest.TestCase):
         self.assertIn('<div class="title">Protection</div>', preview)
         self.assertIn('<div class="title">Services</div>', preview)
 
+
+    def test_protection_card_receives_all_domain_sources(self):
+        preview = build_public_four_card_summary_preview(
+            self.hosts,
+            self.web_statuses,
+            self.storage_checks,
+            self.storage_statuses,
+            self.relationships,
+            self.protection_statuses,
+            self.services,
+            self.service_statuses,
+            ["protection"],
+            backup_checks=[
+                {
+                    "id": "utility-backup",
+                    "name": "Utility Backup",
+                }
+            ],
+            backup_statuses={
+                "utility-backup": {
+                    "label": "OLD",
+                    "css": "warning",
+                    "raw": "marker too old",
+                }
+            },
+            snapshot_rows=[
+                {
+                    "host_id": "nas",
+                    "host_name": "Primary NAS",
+                    "dataset": "tank/apps",
+                    "task_enabled": True,
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "fresh enough",
+                }
+            ],
+            replication_rows=[
+                {
+                    "host_id": "nas",
+                    "host_name": "Primary NAS",
+                    "task_id": "1",
+                    "name": "Primary Copy",
+                    "task_enabled": True,
+                    "label": "RUNNING",
+                    "css": "info",
+                    "raw": (
+                        "replication task is running"
+                    ),
+                }
+            ],
+        )
+
+        self.assertIn(
+            "1 Backup · 1 Snapshot · "
+            "1 Replication · 1 Relationship · "
+            "2 OK · 1 WARNING · 0 CRITICAL · "
+            "1 INFO",
+            preview,
+        )
+        self.assertIn(
+            "Backup · Utility Backup",
+            preview,
+        )
+        self.assertIn(
+            "Snapshot · Primary NAS · tank/apps",
+            preview,
+        )
+        self.assertIn(
+            "Replication · Primary NAS · "
+            "Primary Copy",
+            preview,
+        )
 
     def test_promoted_summary_uses_runtime_presentation(self):
         summary = self.render(
