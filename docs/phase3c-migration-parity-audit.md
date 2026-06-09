@@ -70,6 +70,7 @@ No runtime or production files were modified.
 
 The generator currently consumes these host module switches:
 
+    system_info
     docker
     local_storage
     backup_status
@@ -78,12 +79,12 @@ The generator currently consumes these host module switches:
 
 These example configuration switches are not operational collector gates:
 
-    system_info
     pools
     apps
     services
 
-`system_info` and `pools` represent genuine missing public capabilities.
+`system_info` became operational in Phase 3C.2. `pools` remains a genuine
+missing public capability.
 
 Configured services are selected through their service-level `check`
 value and host eligibility rather than `modules.apps` or
@@ -97,9 +98,9 @@ Those two flags require later clarification, deprecation, or removal.
 |---|---|---:|---|
 | Host inventory | Configuration-driven | Partial | Move production inventory entirely into configuration |
 | Host Web UI reachability | Implemented | Partial | Define global severity behavior |
-| Hostname, OS, kernel, uptime, CPU, memory, load | Missing | Missing | Operationalize `modules.system_info` |
-| Collector-local system information | Missing | Missing | Add local telemetry |
-| Remote Linux and TrueNAS system information | Missing | Missing | Add host-aware SSH telemetry |
+| Hostname, OS, kernel, uptime, CPU, memory, load | Implemented | Supported | Completed in Phase 3C.2 |
+| Collector-local system information | Implemented | Supported | Local telemetry requires no SSH |
+| Remote Linux and TrueNAS system information | Implemented | Supported | Host-aware SSH telemetry with conservative failure handling |
 | TrueNAS pool inventory | Reference-only | Missing | Operationalize `modules.pools` |
 | Pool size and capacity | Reference-only | Missing | Add generic capacity collection |
 | ZFS pool health | Reference-only | Missing | Add health status and severity |
@@ -214,13 +215,35 @@ Low risk:
 - image-update overlays
 - public four-card presentation
 
+## Phase 3C.2 completion
+
+Phase 3C.2 operationalized `modules.system_info` while preserving the
+reference runtime unchanged.
+
+The public runtime now supports:
+
+- collector-local Linux system information without SSH;
+- remote Linux system information over explicit host-specific SSH;
+- remote TrueNAS system information and application activity over explicit
+  host-specific SSH;
+- hostname, OS, kernel, uptime, CPU, memory, load, and Apps or Containers
+  activity fields;
+- `NOT CHECKED`, `UNKNOWN`, and `UNREACHABLE` failure semantics;
+- partial successful payloads without invented values;
+- generic configured-host system-information cards;
+- system-information propagation into the public Systems summary;
+- validation and startup-preflight enforcement for remote hosts.
+
+System-information results intentionally do not contribute to global Overall
+Status yet. That severity boundary remains assigned to Phase 3C.6.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
                  Complete
 
     Phase 3C.2  Config-driven host system information parity
-                 Operationalize modules.system_info
+                 Complete
 
     Phase 3C.3  Config-driven TrueNAS pool capacity and health parity
                  Operationalize modules.pools

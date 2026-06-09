@@ -3,6 +3,7 @@
 import ast
 import html
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -29,6 +30,19 @@ FUNCTIONS_UNDER_TEST = {
     "normalize_config_remote_linux_docker_services",
     "run_config_host_ssh",
     "collect_config_remote_docker_services",
+    "config_system_info_empty_data",
+    "parse_config_system_info_payload",
+    "normalize_config_system_info_hosts",
+    "config_system_info_safe_output",
+    "config_system_info_os_display_name",
+    "config_system_info_cpu_model",
+    "config_system_info_memory_total",
+    "collect_config_local_system_info",
+    "config_remote_system_info_command",
+    "collect_config_system_info",
+    "config_system_info_display_os",
+    "config_system_info_activity_value",
+    "build_config_system_info_preview",
     "config_percent",
     "normalize_config_local_storage_checks",
     "config_local_storage_status",
@@ -54,6 +68,7 @@ FUNCTIONS_UNDER_TEST = {
     "status_text_class",
     "h",
     "badge",
+    "info_item",
     "build_public_summary_card",
     "public_summary_text_class",
     "build_public_summary_detail",
@@ -119,6 +134,7 @@ def load_generator_functions():
     namespace = {
         "html": html,
         "json": json,
+        "os": os,
         "re": re,
         "shlex": shlex,
         "subprocess": subprocess,
@@ -148,6 +164,36 @@ run_config_host_ssh = FUNCTIONS[
 ]
 collect_config_remote_docker_services = FUNCTIONS[
     "collect_config_remote_docker_services"
+]
+config_system_info_empty_data = FUNCTIONS[
+    "config_system_info_empty_data"
+]
+parse_config_system_info_payload = FUNCTIONS[
+    "parse_config_system_info_payload"
+]
+normalize_config_system_info_hosts = FUNCTIONS[
+    "normalize_config_system_info_hosts"
+]
+config_system_info_safe_output = FUNCTIONS[
+    "config_system_info_safe_output"
+]
+collect_config_local_system_info = FUNCTIONS[
+    "collect_config_local_system_info"
+]
+config_remote_system_info_command = FUNCTIONS[
+    "config_remote_system_info_command"
+]
+collect_config_system_info = FUNCTIONS[
+    "collect_config_system_info"
+]
+config_system_info_display_os = FUNCTIONS[
+    "config_system_info_display_os"
+]
+config_system_info_activity_value = FUNCTIONS[
+    "config_system_info_activity_value"
+]
+build_config_system_info_preview = FUNCTIONS[
+    "build_config_system_info_preview"
 ]
 config_percent = FUNCTIONS[
     "config_percent"
@@ -4837,6 +4883,515 @@ class PublicRuntimeDetailPromotionTests(unittest.TestCase):
             promote_public_runtime_detail_html(""),
             "",
         )
+
+
+class ConfiguredSystemInfoRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.original_host_ssh = FUNCTIONS.get(
+            "run_config_host_ssh"
+        )
+        self.original_local_collector = FUNCTIONS.get(
+            "collect_config_local_system_info"
+        )
+
+    def tearDown(self):
+        FUNCTIONS["run_config_host_ssh"] = self.original_host_ssh
+        FUNCTIONS["collect_config_local_system_info"] = (
+            self.original_local_collector
+        )
+
+    @staticmethod
+    def remote_host(**overrides):
+        host = {
+            "id": "remote-linux",
+            "enabled": True,
+            "display_name": "Remote Linux",
+            "hostname": "remote-linux",
+            "address": "192.0.2.20",
+            "type": "linux",
+            "ssh": {
+                "enabled": True,
+                "user": "sanity",
+                "key_file": "/app/ssh/remote-linux",
+            },
+            "modules": {
+                "system_info": True,
+                "docker": True,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    @staticmethod
+    def collector_host(**overrides):
+        host = {
+            "id": "collector",
+            "enabled": True,
+            "display_name": "Collector",
+            "hostname": "collector",
+            "type": "linux",
+            "modules": {
+                "system_info": True,
+                "docker": False,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    def test_normalizer_preserves_eligible_and_not_checked_hosts(self):
+        hosts = [
+            self.collector_host(),
+            self.remote_host(),
+            self.remote_host(
+                id="nas",
+                display_name="Storage",
+                hostname="storage",
+                type="truenas",
+                modules={
+                    "system_info": True,
+                },
+            ),
+            self.remote_host(
+                id="module-disabled",
+                modules={
+                    "system_info": False,
+                },
+            ),
+            self.remote_host(
+                id="missing-address",
+                address="",
+            ),
+            self.remote_host(
+                id="ssh-disabled",
+                ssh={
+                    "enabled": False,
+                    "user": "sanity",
+                    "key_file": "/app/ssh/key",
+                },
+            ),
+            self.remote_host(
+                id="host-disabled",
+                enabled=False,
+            ),
+        ]
+
+        result = normalize_config_system_info_hosts(hosts)
+        by_id = {
+            host["id"]: host
+            for host in result
+        }
+
+        self.assertTrue(by_id["collector"]["eligible"])
+        self.assertEqual(by_id["collector"]["mode"], "local")
+        self.assertEqual(
+            by_id["collector"]["activity"],
+            "containers",
+        )
+
+        self.assertTrue(by_id["remote-linux"]["eligible"])
+        self.assertEqual(
+            by_id["remote-linux"]["mode"],
+            "remote",
+        )
+        self.assertTrue(
+            by_id["remote-linux"]["docker_enabled"]
+        )
+
+        self.assertTrue(by_id["nas"]["eligible"])
+        self.assertEqual(by_id["nas"]["activity"], "apps")
+
+        self.assertFalse(
+            by_id["module-disabled"]["eligible"]
+        )
+        self.assertEqual(
+            by_id["module-disabled"]["reason"],
+            "system_info module disabled",
+        )
+
+        self.assertFalse(
+            by_id["missing-address"]["eligible"]
+        )
+        self.assertEqual(
+            by_id["missing-address"]["reason"],
+            "missing host address",
+        )
+
+        self.assertFalse(
+            by_id["ssh-disabled"]["eligible"]
+        )
+        self.assertIn(
+            "SSH",
+            by_id["ssh-disabled"]["reason"],
+        )
+
+        self.assertFalse(
+            by_id["host-disabled"]["eligible"]
+        )
+        self.assertEqual(
+            by_id["host-disabled"]["reason"],
+            "host disabled",
+        )
+
+    def test_payload_parser_accepts_partial_valid_data(self):
+        parsed, recognized = parse_config_system_info_payload(
+            "Authorized access only\n"
+            "HOSTNAME=example-host\n"
+            "CPU_CORES=8\n"
+            "DOCKER_RUNNING=0\n"
+        )
+
+        self.assertEqual(recognized, 3)
+        self.assertEqual(
+            parsed["hostname"],
+            "example-host",
+        )
+        self.assertEqual(parsed["cpu_cores"], "8")
+        self.assertEqual(
+            parsed["containers_running"],
+            "0",
+        )
+        self.assertEqual(parsed["memory_total"], "-")
+
+    def test_remote_command_is_host_type_aware_and_generic(self):
+        linux_command = config_remote_system_info_command(
+            {
+                "type": "linux",
+                "docker_enabled": True,
+            }
+        )
+        truenas_command = config_remote_system_info_command(
+            {
+                "type": "truenas",
+                "docker_enabled": False,
+            }
+        )
+
+        self.assertIn(
+            'HOST_TYPE = "linux"',
+            linux_command,
+        )
+        self.assertIn(
+            "COLLECT_DOCKER = True",
+            linux_command,
+        )
+        self.assertIn(
+            'HOST_TYPE = "truenas"',
+            truenas_command,
+        )
+        self.assertIn(
+            "COLLECT_DOCKER = False",
+            truenas_command,
+        )
+        self.assertIn("midclt", truenas_command)
+
+        for personal_value in (
+            "192.168.30.",
+            "/home/controls",
+            "T620",
+            "T330",
+            "Utility Node",
+        ):
+            self.assertNotIn(
+                personal_value,
+                linux_command,
+            )
+            self.assertNotIn(
+                personal_value,
+                truenas_command,
+            )
+
+    def test_collector_reports_success_and_conservative_failures(self):
+        normalized = normalize_config_system_info_hosts(
+            [
+                self.collector_host(),
+                self.remote_host(
+                    id="healthy",
+                    display_name="Healthy",
+                ),
+                self.remote_host(
+                    id="unreachable",
+                    display_name="Unreachable",
+                ),
+                self.remote_host(
+                    id="authentication",
+                    display_name="Authentication",
+                ),
+                self.remote_host(
+                    id="malformed",
+                    display_name="Malformed",
+                ),
+                self.remote_host(
+                    id="module-disabled",
+                    display_name="Module Disabled",
+                    modules={
+                        "system_info": False,
+                    },
+                ),
+            ]
+        )
+
+        FUNCTIONS["collect_config_local_system_info"] = (
+            lambda host: {
+                **config_system_info_empty_data(),
+                "hostname": "collector-local",
+                "os": "Example Linux",
+                "kernel": "6.0-test",
+                "cpu_model": "Example CPU",
+                "cpu_cores": "4",
+                "memory_total": "8Gi",
+                "uptime": "up 1 day",
+                "load": "0.10, 0.20, 0.30",
+            }
+        )
+
+        def fake_ssh(host, command, timeout=30):
+            host_id = host["id"]
+
+            if host_id == "healthy":
+                return (
+                    0,
+                    "HOSTNAME=remote-linux\n"
+                    "OS=Example Linux\n"
+                    "KERNEL=6.0-test\n"
+                    "CPU_MODEL=Example CPU\n"
+                    "CPU_CORES=8\n"
+                    "MEMORY_TOTAL=16Gi\n"
+                    "UPTIME=up 2 days\n"
+                    "LOAD=0.01, 0.02, 0.03\n"
+                    "DOCKER_RUNNING=0\n"
+                    "DOCKER_TOTAL=3\n",
+                )
+
+            if host_id == "unreachable":
+                return (
+                    255,
+                    "ssh: connect to host: No route to host",
+                )
+
+            if host_id == "authentication":
+                return (
+                    255,
+                    "Permission denied (publickey)",
+                )
+
+            if host_id == "malformed":
+                return 0, "login banner only"
+
+            raise AssertionError(
+                f"Unexpected SSH host: {host_id}"
+            )
+
+        FUNCTIONS["run_config_host_ssh"] = fake_ssh
+
+        statuses, errors = collect_config_system_info(
+            normalized
+        )
+
+        self.assertEqual(
+            statuses["collector"]["label"],
+            "OK",
+        )
+        self.assertTrue(
+            statuses["collector"]["reachable"]
+        )
+
+        self.assertEqual(
+            statuses["healthy"]["label"],
+            "OK",
+        )
+        self.assertEqual(
+            statuses["healthy"]["containers_running"],
+            "0",
+        )
+        self.assertEqual(
+            statuses["healthy"]["containers_total"],
+            "3",
+        )
+
+        self.assertEqual(
+            statuses["unreachable"]["label"],
+            "UNREACHABLE",
+        )
+        self.assertEqual(
+            statuses["unreachable"]["css"],
+            "bad",
+        )
+
+        self.assertEqual(
+            statuses["authentication"]["label"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            statuses["authentication"]["css"],
+            "info",
+        )
+
+        self.assertEqual(
+            statuses["malformed"]["label"],
+            "UNKNOWN",
+        )
+        self.assertIn(
+            "malformed",
+            statuses["malformed"]["raw"],
+        )
+
+        self.assertEqual(
+            statuses["module-disabled"]["label"],
+            "NOT CHECKED",
+        )
+        self.assertIsNone(
+            statuses["module-disabled"]["reachable"]
+        )
+
+        self.assertEqual(len(errors), 3)
+
+    def test_generic_preview_renders_linux_and_truenas_activity(self):
+        hosts = [
+            self.collector_host(
+                display_name="Collector <Main>",
+            ),
+            self.remote_host(
+                id="nas",
+                display_name="Storage & Apps",
+                hostname="storage",
+                type="truenas",
+                modules={
+                    "system_info": True,
+                },
+            ),
+        ]
+        statuses = {
+            "collector": {
+                **config_system_info_empty_data(),
+                "host_type": "linux",
+                "activity": "containers",
+                "label": "OK",
+                "css": "ok",
+                "reachable": True,
+                "hostname": "collector",
+                "os": "Example Linux",
+                "containers_running": "0",
+                "containers_total": "2",
+                "raw": "collector-local system information collected",
+            },
+            "nas": {
+                **config_system_info_empty_data(),
+                "host_type": "truenas",
+                "activity": "apps",
+                "label": "OK",
+                "css": "ok",
+                "reachable": True,
+                "hostname": "storage",
+                "os": "Debian GNU/Linux",
+                "apps_running": "3",
+                "apps_total": "4",
+                "raw": "remote system information collected",
+            },
+        }
+
+        preview = build_config_system_info_preview(
+            hosts,
+            statuses,
+        )
+
+        self.assertIn(
+            "Configured System Information",
+            preview,
+        )
+        self.assertIn(
+            "2 checked · 0 not checked",
+            preview,
+        )
+        self.assertIn(
+            "Collector &lt;Main&gt;",
+            preview,
+        )
+        self.assertIn(
+            "Storage &amp; Apps",
+            preview,
+        )
+        self.assertIn("TrueNAS SCALE", preview)
+        self.assertIn("Containers", preview)
+        self.assertIn("0 / 2 running", preview)
+        self.assertIn("Apps", preview)
+        self.assertIn("3 / 4 running", preview)
+
+    def test_systems_summary_uses_telemetry_without_overall_status(self):
+        host = self.collector_host()
+        no_web = {
+            "label": "NO URL",
+            "css": "info",
+            "raw": "missing web_url",
+        }
+        system_ok = {
+            "label": "OK",
+            "css": "ok",
+            "raw": "collector-local system information collected",
+        }
+
+        result = config_system_host_status(
+            host,
+            [],
+            {},
+            no_web,
+            system_ok,
+        )
+
+        self.assertEqual(result, system_ok)
+
+        card = build_public_systems_summary_card(
+            [host],
+            {"collector": no_web},
+            [],
+            {},
+            {"collector": system_ok},
+        )
+
+        self.assertIn(
+            "1 Systems · 1 OK · 0 DOWN",
+            card,
+        )
+        self.assertIn("Collector", card)
+
+        unreachable = {
+            "label": "UNREACHABLE",
+            "css": "bad",
+            "raw": "No route to host",
+        }
+        web_ok = {
+            "label": "OK",
+            "css": "ok",
+            "raw": "HTTP 200",
+        }
+
+        result = config_system_host_status(
+            host,
+            [],
+            {},
+            web_ok,
+            unreachable,
+        )
+
+        self.assertEqual(
+            result["label"],
+            "UNREACHABLE",
+        )
+
+        web_down = {
+            "label": "DOWN",
+            "css": "bad",
+            "raw": "HTTP 503",
+        }
+
+        result = config_system_host_status(
+            host,
+            [],
+            {},
+            web_down,
+            system_ok,
+        )
+
+        self.assertEqual(result, web_down)
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):

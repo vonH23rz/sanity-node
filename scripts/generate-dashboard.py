@@ -466,6 +466,496 @@ def run_config_host_ssh(host, command, timeout=30):
     return result.returncode, output
 
 
+
+def config_system_info_empty_data():
+    return {
+        "hostname": "-",
+        "os": "-",
+        "kernel": "-",
+        "cpu_model": "-",
+        "cpu_cores": "-",
+        "memory_total": "-",
+        "uptime": "-",
+        "load": "-",
+        "apps_running": "-",
+        "apps_total": "-",
+        "containers_running": "-",
+        "containers_total": "-",
+    }
+
+
+def parse_config_system_info_payload(output):
+    data = config_system_info_empty_data()
+    recognized_fields = 0
+    key_map = {
+        "HOSTNAME": "hostname",
+        "OS": "os",
+        "KERNEL": "kernel",
+        "CPU_MODEL": "cpu_model",
+        "CPU_CORES": "cpu_cores",
+        "MEMORY_TOTAL": "memory_total",
+        "UPTIME": "uptime",
+        "LOAD": "load",
+        "APPS_RUNNING": "apps_running",
+        "APPS_TOTAL": "apps_total",
+        "DOCKER_RUNNING": "containers_running",
+        "DOCKER_TOTAL": "containers_total",
+    }
+
+    for line in str(output or "").splitlines():
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        field_name = key_map.get(key.strip())
+
+        if not field_name:
+            continue
+
+        data[field_name] = value.strip() or "-"
+        recognized_fields += 1
+
+    return data, recognized_fields
+
+
+def normalize_config_system_info_hosts(hosts):
+    collector_id = str(
+        cfg_get(("collector", "id"), "collector") or "collector"
+    ).strip()
+    normalized = []
+
+    for host in hosts or []:
+        if not isinstance(host, dict):
+            continue
+
+        host_id = str(host.get("id") or "").strip()
+        host_key = configured_host_key(host)
+
+        if not host_key:
+            continue
+
+        host_type = str(host.get("type") or "").strip().lower()
+        display_name = str(
+            host.get("display_name")
+            or host.get("hostname")
+            or host_id
+            or "Configured Host"
+        )
+        enabled = bool(host.get("enabled", True))
+        modules = host.get("modules")
+        modules = modules if isinstance(modules, dict) else {}
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+        ssh = ssh if isinstance(ssh, dict) else {}
+        is_collector = bool(
+            host_id
+            and (
+                host_id == collector_id
+                or host_id == "collector"
+            )
+        )
+
+        item = {
+            "key": host_key,
+            "id": host_id,
+            "display_name": display_name,
+            "type": host_type,
+            "address": address,
+            "is_collector": is_collector,
+            "activity": (
+                "apps"
+                if host_type == "truenas"
+                else "containers"
+            ),
+            "docker_enabled": modules.get("docker") is True,
+            "eligible": False,
+            "mode": "none",
+            "reason": "system_info module disabled",
+            "ssh_user": "",
+            "ssh_key_file": "",
+        }
+
+        if not enabled:
+            item["reason"] = "host disabled"
+        elif modules.get("system_info") is not True:
+            item["reason"] = "system_info module disabled"
+        elif host_type not in {"linux", "truenas"}:
+            item["reason"] = "unsupported host type"
+        elif is_collector:
+            if host_type != "linux":
+                item["reason"] = "collector host must be linux"
+            else:
+                item["eligible"] = True
+                item["mode"] = "local"
+                item["reason"] = "collector-local system information"
+        elif not address:
+            item["reason"] = "missing host address"
+        elif ssh.get("enabled") is not True:
+            item["reason"] = "host SSH configuration missing or disabled"
+        else:
+            ssh_user = str(ssh.get("user") or "").strip()
+            ssh_key_file = str(ssh.get("key_file") or "").strip()
+
+            if not ssh_user:
+                item["reason"] = "missing ssh.user"
+            elif not ssh_key_file:
+                item["reason"] = "missing ssh.key_file"
+            else:
+                item["eligible"] = True
+                item["mode"] = "remote"
+                item["reason"] = "remote system information"
+                item["ssh_user"] = ssh_user
+                item["ssh_key_file"] = ssh_key_file
+
+        normalized.append(item)
+
+    return normalized
+
+
+def config_system_info_safe_output(
+    command,
+    default="-",
+    allow_empty=False,
+):
+    try:
+        value = subprocess.check_output(
+            command,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+
+        if value or allow_empty:
+            return value
+
+        return default
+    except Exception:
+        return default
+
+
+def config_system_info_os_display_name():
+    try:
+        with open("/etc/os-release", "r") as handle:
+            for line in handle:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+
+    return "-"
+
+
+def config_system_info_cpu_model():
+    try:
+        with open("/proc/cpuinfo", "r") as handle:
+            for line in handle:
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+
+    return "-"
+
+
+def config_system_info_memory_total():
+    try:
+        with open("/proc/meminfo", "r") as handle:
+            for line in handle:
+                if line.startswith("MemTotal:"):
+                    kilobytes = int(line.split()[1])
+                    gibibytes = round(kilobytes / 1024 / 1024)
+                    return f"{gibibytes}Gi"
+    except Exception:
+        pass
+
+    return "-"
+
+
+def collect_config_local_system_info(host):
+    data = config_system_info_empty_data()
+    data.update(
+        {
+            "hostname": config_system_info_safe_output(["hostname"]),
+            "os": config_system_info_os_display_name(),
+            "kernel": config_system_info_safe_output(["uname", "-r"]),
+            "cpu_model": config_system_info_cpu_model(),
+            "cpu_cores": str(os.cpu_count() or "-"),
+            "memory_total": config_system_info_memory_total(),
+            "uptime": config_system_info_safe_output(["uptime", "-p"]),
+        }
+    )
+
+    try:
+        data["load"] = ", ".join(
+            f"{value:.2f}"
+            for value in os.getloadavg()
+        )
+    except Exception:
+        data["load"] = "-"
+
+    if host.get("docker_enabled"):
+        running_output = config_system_info_safe_output(
+            ["docker", "ps", "-q"],
+            allow_empty=True,
+        )
+        total_output = config_system_info_safe_output(
+            ["docker", "ps", "-aq"],
+            allow_empty=True,
+        )
+
+        if running_output == "-":
+            data["containers_running"] = "-"
+        else:
+            data["containers_running"] = str(
+                len(running_output.splitlines())
+                if running_output
+                else 0
+            )
+
+        if total_output == "-":
+            data["containers_total"] = "-"
+        else:
+            data["containers_total"] = str(
+                len(total_output.splitlines())
+                if total_output
+                else 0
+            )
+
+    return data
+
+
+def config_remote_system_info_command(host):
+    host_type = json.dumps(str(host.get("type") or "").lower())
+    collect_docker = (
+        "True"
+        if host.get("docker_enabled") is True
+        else "False"
+    )
+
+    return f"""python3 - <<'REMOTE_PY'
+import json
+import os
+import subprocess
+
+HOST_TYPE = {host_type}
+COLLECT_DOCKER = {collect_docker}
+
+
+def safe_output(command, default="-"):
+    try:
+        value = subprocess.check_output(
+            command,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return value or default
+    except Exception:
+        return default
+
+
+def os_display_name():
+    try:
+        with open("/etc/os-release", "r") as handle:
+            for line in handle:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+
+    return "-"
+
+
+def cpu_model():
+    try:
+        with open("/proc/cpuinfo", "r") as handle:
+            for line in handle:
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+
+    return "-"
+
+
+def memory_total():
+    try:
+        with open("/proc/meminfo", "r") as handle:
+            for line in handle:
+                if line.startswith("MemTotal:"):
+                    kilobytes = int(line.split()[1])
+                    gibibytes = round(kilobytes / 1024 / 1024)
+                    return f"{{gibibytes}}Gi"
+    except Exception:
+        pass
+
+    return "-"
+
+
+print(f"HOSTNAME={{safe_output(['hostname'])}}")
+print(f"OS={{os_display_name()}}")
+print(f"KERNEL={{safe_output(['uname', '-r'])}}")
+print(f"CPU_MODEL={{cpu_model()}}")
+print(f"CPU_CORES={{os.cpu_count() or '-'}}")
+print(f"MEMORY_TOTAL={{memory_total()}}")
+print(f"UPTIME={{safe_output(['uptime', '-p'])}}")
+
+try:
+    load = ", ".join(
+        f"{{value:.2f}}"
+        for value in os.getloadavg()
+    )
+except Exception:
+    load = "-"
+
+print(f"LOAD={{load}}")
+
+if HOST_TYPE == "truenas":
+    try:
+        raw = subprocess.check_output(
+            ["midclt", "call", "app.query"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        apps = json.loads(raw)
+        print(
+            "APPS_RUNNING="
+            + str(
+                len(
+                    [
+                        app
+                        for app in apps
+                        if app.get("state") == "RUNNING"
+                    ]
+                )
+            )
+        )
+        print("APPS_TOTAL=" + str(len(apps)))
+    except Exception:
+        print("APPS_RUNNING=-")
+        print("APPS_TOTAL=-")
+elif COLLECT_DOCKER:
+    try:
+        running = subprocess.check_output(
+            ["docker", "ps", "-q"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()
+        total = subprocess.check_output(
+            ["docker", "ps", "-aq"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()
+        print("DOCKER_RUNNING=" + str(len(running)))
+        print("DOCKER_TOTAL=" + str(len(total)))
+    except Exception:
+        print("DOCKER_RUNNING=-")
+        print("DOCKER_TOTAL=-")
+REMOTE_PY"""
+
+
+def collect_config_system_info(hosts):
+    statuses = {}
+    errors = []
+
+    for host in hosts:
+        host_key = host["key"]
+        base_status = {
+            "host_id": host.get("id", ""),
+            "display_name": host.get("display_name", "Configured Host"),
+            "host_type": host.get("type", ""),
+            "activity": host.get("activity", "containers"),
+        }
+
+        if not host.get("eligible"):
+            statuses[host_key] = {
+                **base_status,
+                **config_system_info_empty_data(),
+                "label": "NOT CHECKED",
+                "css": "info",
+                "reachable": None,
+                "raw": host.get("reason") or "host not eligible",
+            }
+            continue
+
+        if host.get("mode") == "local":
+            try:
+                data = collect_config_local_system_info(host)
+            except Exception as exc:
+                raw = str(exc)
+                statuses[host_key] = {
+                    **base_status,
+                    **config_system_info_empty_data(),
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "reachable": False,
+                    "raw": raw,
+                }
+                errors.append(
+                    f"{host.get('display_name')}: {raw}"
+                )
+                continue
+
+            statuses[host_key] = {
+                **base_status,
+                **data,
+                "label": "OK",
+                "css": "ok",
+                "reachable": True,
+                "raw": "collector-local system information collected",
+            }
+            continue
+
+        returncode, output = run_config_host_ssh(
+            host,
+            config_remote_system_info_command(host),
+            timeout=30,
+        )
+
+        if returncode != 0:
+            raw = output or "remote system-information query failed"
+            unreachable = config_error_indicates_host_unreachable(raw)
+            statuses[host_key] = {
+                **base_status,
+                **config_system_info_empty_data(),
+                "label": "UNREACHABLE" if unreachable else "UNKNOWN",
+                "css": "bad" if unreachable else "info",
+                "reachable": False,
+                "raw": raw,
+            }
+            errors.append(
+                f"{host.get('display_name')}: {raw}"
+            )
+            continue
+
+        data, recognized_fields = parse_config_system_info_payload(
+            output
+        )
+
+        if recognized_fields == 0:
+            raw = "malformed system-information payload"
+            statuses[host_key] = {
+                **base_status,
+                **data,
+                "label": "UNKNOWN",
+                "css": "info",
+                "reachable": False,
+                "raw": raw,
+            }
+            errors.append(
+                f"{host.get('display_name')}: {raw}"
+            )
+            continue
+
+        statuses[host_key] = {
+            **base_status,
+            **data,
+            "label": "OK",
+            "css": "ok",
+            "reachable": True,
+            "raw": "remote system information collected",
+        }
+
+    return statuses, errors
+
 def collect_config_remote_docker_services(services):
     statuses = {}
     errors = []
@@ -3360,6 +3850,129 @@ def collect_configured_host_web_statuses(hosts):
     return statuses
 
 
+def config_system_info_display_os(status):
+    if str(status.get("host_type") or "").lower() == "truenas":
+        return "TrueNAS SCALE"
+
+    return status.get("os", "-")
+
+
+def config_system_info_activity_value(status):
+    if status.get("activity") == "apps":
+        running = status.get("apps_running", "-")
+        total = status.get("apps_total", "-")
+    else:
+        running = status.get("containers_running", "-")
+        total = status.get("containers_total", "-")
+
+    if running == "-" and total == "-":
+        return "-"
+
+    return f"{running} / {total} running"
+
+
+def build_config_system_info_preview(hosts, statuses):
+    configured_hosts = [
+        host
+        for host in hosts or []
+        if isinstance(host, dict)
+    ]
+
+    if not configured_hosts:
+        return ""
+
+    statuses = statuses or {}
+    cards = ""
+    checked_count = 0
+    not_checked_count = 0
+
+    for host in sorted(
+        configured_hosts,
+        key=configured_host_sort_key,
+    ):
+        host_key = configured_host_key(host)
+        display_name = configured_host_display_name(host)
+        host_type = str(host.get("type") or "").lower()
+        default_activity = (
+            "apps"
+            if host_type == "truenas"
+            else "containers"
+        )
+        status = statuses.get(
+            host_key,
+            {
+                **config_system_info_empty_data(),
+                "host_type": host_type,
+                "activity": default_activity,
+                "label": "NOT CHECKED",
+                "css": "info",
+                "reachable": None,
+                "raw": "system information unavailable",
+            },
+        )
+        label = status.get("label", "UNKNOWN")
+        css = status.get("css", "info")
+        card_css = css if css in {"info", "warning", "bad"} else ""
+
+        if label == "NOT CHECKED":
+            not_checked_count += 1
+        else:
+            checked_count += 1
+
+        activity_label = (
+            "Apps"
+            if status.get("activity") == "apps"
+            else "Containers"
+        )
+
+        cards += (
+            f'<div class="system-card {h(card_css)}">'
+            '<div class="system-card-header">'
+            '<div>'
+            '<div class="system-card-kicker">'
+            'System Information'
+            '</div>'
+            f'<h3>{h(display_name)}</h3>'
+            '</div>'
+            f'{badge(label, css)}'
+            '</div>'
+            '<div class="system-info-grid">'
+            f'{info_item("Hostname", status.get("hostname", "-"))}'
+            f'{info_item("OS", config_system_info_display_os(status))}'
+            f'{info_item("Kernel", status.get("kernel", "-"))}'
+            f'{info_item("Uptime", status.get("uptime", "-"))}'
+            '<div class="info-item wide">'
+            '<div class="info-label">CPU Model</div>'
+            f'<div class="info-value">{h(status.get("cpu_model", "-"))}</div>'
+            '</div>'
+            f'{info_item("CPU Cores", status.get("cpu_cores", "-"))}'
+            f'{info_item("Memory", status.get("memory_total", "-"))}'
+            f'{info_item("Load", status.get("load", "-"))}'
+            f'{info_item(activity_label, config_system_info_activity_value(status))}'
+            '</div>'
+            '<p class="muted-small">'
+            f'<strong>Result:</strong> {h(status.get("raw", "-"))}'
+            '</p>'
+            '</div>'
+        )
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured System Information</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(checked_count)} checked · {h(not_checked_count)} not checked</div>
+    </div>
+    <p class="muted-small">Collector-local and eligible remote Linux or TrueNAS system-information checks are active. These preview results do not affect Overall Status yet.</p>
+    <div class="system-info-row">
+      {cards}
+    </div>
+  </div>
+"""
+
+
 def build_configured_hosts_preview(hosts, web_statuses=None):
     if not hosts:
         return ""
@@ -3869,7 +4482,13 @@ def public_card_css(bad_count=0, warning_count=0, info_count=0):
     return ""
 
 
-def config_system_host_status(host, services, statuses, web_status):
+def config_system_host_status(
+    host,
+    services,
+    statuses,
+    web_status,
+    system_info_status=None,
+):
     host_id = str(host.get("id") or "")
     host_services = [
         service
@@ -3888,6 +4507,22 @@ def config_system_host_status(host, services, statuses, web_status):
             "raw": "configured TrueNAS app checks indicate host unreachable",
         }
 
+    system_info_status = system_info_status or {
+        "label": "NOT CHECKED",
+        "css": "info",
+        "raw": "system information not checked",
+    }
+    system_label = system_info_status.get("label", "UNKNOWN")
+
+    if system_label == "UNREACHABLE":
+        return system_info_status
+
+    if web_status.get("css") == "bad":
+        return web_status
+
+    if system_label in {"UNKNOWN", "OK"}:
+        return system_info_status
+
     return web_status
 
 
@@ -3896,10 +4531,12 @@ def build_public_systems_summary_card(
     web_statuses,
     services=None,
     service_statuses=None,
+    system_info_statuses=None,
 ):
     enabled_hosts = sorted(enabled_items(hosts), key=configured_host_sort_key)
     services = services or []
     service_statuses = service_statuses or {}
+    system_info_statuses = system_info_statuses or {}
 
     if not enabled_hosts:
         return build_public_summary_card(
@@ -3926,6 +4563,7 @@ def build_public_systems_summary_card(
             services,
             service_statuses,
             web_status,
+            system_info_statuses.get(host_key),
         )
         label = status.get("label", "UNKNOWN")
         css = status.get("css", "info")
@@ -4080,6 +4718,7 @@ def build_public_four_card_summary_preview(
     service_statuses,
     summary_cards,
     promoted=False,
+    system_info_statuses=None,
 ):
     builders = {
         "systems": lambda: build_public_systems_summary_card(
@@ -4087,6 +4726,7 @@ def build_public_four_card_summary_preview(
             web_statuses,
             services,
             service_statuses,
+            system_info_statuses,
         ),
         "storage": lambda: build_public_storage_summary_card(local_storage_checks, local_storage_statuses),
         "protection": lambda: build_public_protection_summary_card(protection_relationships, protection_statuses),
@@ -5420,7 +6060,40 @@ REMOTE_PY"""
     """
 
 configured_host_web_statuses = collect_configured_host_web_statuses(CONFIG_HOSTS)
-configured_hosts_preview_html = build_configured_hosts_preview(CONFIG_HOSTS, configured_host_web_statuses)
+
+config_system_info_hosts = normalize_config_system_info_hosts(
+    CONFIG_HOSTS
+)
+config_system_info_statuses, config_system_info_errors = (
+    collect_config_system_info(config_system_info_hosts)
+)
+
+for error in config_system_info_errors:
+    collection_errors.append(
+        ("Configured system information query", error)
+    )
+
+config_system_info_preview_html = build_config_system_info_preview(
+    CONFIG_HOSTS,
+    config_system_info_statuses,
+)
+
+configured_hosts_preview_html = build_configured_hosts_preview(
+    CONFIG_HOSTS,
+    configured_host_web_statuses,
+)
+
+eligible_system_info_hosts = [
+    host
+    for host in config_system_info_hosts
+    if host.get("eligible")
+]
+
+if eligible_system_info_hosts:
+    print(
+        "Configured system-information hosts checked: "
+        f"{len(eligible_system_info_hosts)}"
+    )
 
 config_truenas_snapshot_hosts = normalize_config_truenas_snapshot_hosts(CONFIG_HOSTS)
 config_truenas_snapshot_rows, config_truenas_snapshot_errors = collect_config_truenas_snapshot_checks(
@@ -5785,11 +6458,17 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     public_summary_statuses,
     CONFIG_SUMMARY_CARDS,
     promoted=DASHBOARD_RUNTIME_MODE == "public",
+    system_info_statuses=config_system_info_statuses,
 )
 
 if DASHBOARD_RUNTIME_MODE == "public":
     configured_hosts_preview_html = promote_public_runtime_detail_html(
         configured_hosts_preview_html
+    )
+    config_system_info_preview_html = (
+        promote_public_runtime_detail_html(
+            config_system_info_preview_html
+        )
     )
     config_truenas_snapshot_preview_html = (
         promote_public_runtime_detail_html(
@@ -6177,6 +6856,14 @@ pre, .mono {{
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   border: 1px solid var(--border);
   border-left: 6px solid #9ad29a;
+}}
+
+.system-card.info {{
+  border-left-color: #9cc9ff;
+}}
+
+.system-card.warning {{
+  border-left-color: #e2b24b;
 }}
 
 .system-card.bad {{
@@ -6716,6 +7403,8 @@ pre, .mono {{
   <h2>{h(details_section_heading)}</h2>
 {systems_layout_container_html}
   {configured_hosts_preview_html}
+
+  {config_system_info_preview_html}
 
   {config_truenas_snapshot_preview_html}
 

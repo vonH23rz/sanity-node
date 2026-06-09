@@ -64,6 +64,11 @@ collector:
 #
 # Disabled hosts are ignored until enabled.
 #
+# For enabled remote type: truenas or type: linux hosts:
+# - modules.system_info: true collects hostname, OS, kernel, uptime, CPU,
+#   memory, load, and host-type-aware Apps or Containers activity
+# - the host must provide an address and explicit enabled SSH settings
+#
 # For enabled type: truenas hosts:
 # - modules.snapshots: true activates live periodic snapshot-task and
 #   latest-snapshot freshness checks
@@ -98,7 +103,7 @@ hosts:
       key_file: /app/ssh/id_ed25519
 
     modules:
-      system_info: true          # true/false
+      system_info: true          # collect generic host telemetry
       pools: true                # true/false
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
@@ -130,7 +135,7 @@ hosts:
       key_file: /app/ssh/id_ed25519
 
     modules:
-      system_info: true          # true/false
+      system_info: true          # collect generic host telemetry
       pools: true                # true/false
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
@@ -142,6 +147,7 @@ hosts:
   # Collector as monitored host
   # ---------------------------------------------------------------------------
   # 🩵 Optional but recommended: monitor the collector itself.
+  # Collector-local system_info requires no SSH credentials.
 
   - id: collector
     enabled: true
@@ -151,7 +157,7 @@ hosts:
     type: linux
 
     modules:
-      system_info: true          # true/false
+      system_info: true          # collect locally without SSH
       local_storage: true        # true/false
       docker: true               # true/false
       backup_status: false       # true/false
