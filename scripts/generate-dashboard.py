@@ -1896,7 +1896,7 @@ def config_backup_status(
     except Exception as e:
         return {
             "label": "UNKNOWN",
-            "css": "info",
+            "css": "warning",
             "raw": f"could not read marker age: {e}",
         }
 
@@ -1907,6 +1907,7 @@ def config_backup_status(
     if timer:
         if timer_error:
             timer_note = f"timer unknown: {timer_error}"
+            timer_css = "warning"
         else:
             normalized_timer_state = (
                 str(timer_state or "unknown").strip()
@@ -2027,7 +2028,7 @@ def collect_config_backup_checks(checks):
             if not marker_file:
                 statuses[check_id] = {
                     "label": "UNKNOWN",
-                    "css": "info",
+                    "css": "warning",
                     "raw": "missing marker_file",
                 }
                 continue
@@ -2047,7 +2048,7 @@ def collect_config_backup_checks(checks):
             except Exception as e:
                 statuses[check_id] = {
                     "label": "UNKNOWN",
-                    "css": "info",
+                    "css": "warning",
                     "raw": f"could not read marker age: {e}",
                 }
                 continue
@@ -2098,7 +2099,7 @@ def collect_config_backup_checks(checks):
         if not marker_file:
             statuses[check_id] = {
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": "missing marker_file",
             }
             continue
@@ -2112,7 +2113,7 @@ def collect_config_backup_checks(checks):
         if returncode is None or returncode == 255:
             statuses[check_id] = {
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": output or "remote backup query failed",
             }
             continue
@@ -2128,7 +2129,7 @@ def collect_config_backup_checks(checks):
         if returncode != 0:
             statuses[check_id] = {
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": (
                     output
                     or
@@ -2144,7 +2145,7 @@ def collect_config_backup_checks(checks):
         if parse_error:
             statuses[check_id] = {
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": parse_error,
             }
             continue
@@ -2348,7 +2349,7 @@ def apply_config_protection_replication_overlay(
         "bad": 4,
         "warning": 3,
         "info": 2,
-        "disabled": 2,
+        "disabled": 3,
         "ok": 1,
     }
 
@@ -2490,7 +2491,7 @@ def apply_config_protection_snapshot_overlay(
         "bad": 4,
         "warning": 3,
         "info": 2,
-        "disabled": 2,
+        "disabled": 3,
         "ok": 1,
     }
     overlay_css = {
@@ -2703,7 +2704,7 @@ def collect_config_truenas_snapshot_checks(hosts):
                 "dataset": "-",
                 "task_enabled": None,
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "latest": "-",
                 "latest_time": "-",
                 "raw": "missing host address",
@@ -2723,7 +2724,7 @@ def collect_config_truenas_snapshot_checks(hosts):
                 "dataset": "-",
                 "task_enabled": None,
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "latest": "-",
                 "latest_time": "-",
                 "raw": "snapshot task query failed",
@@ -2738,7 +2739,7 @@ def collect_config_truenas_snapshot_checks(hosts):
                 "dataset": "-",
                 "task_enabled": None,
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "latest": "-",
                 "latest_time": "-",
                 "raw": "unexpected snapshot task response",
@@ -2810,7 +2811,7 @@ def collect_config_truenas_snapshot_checks(hosts):
 
             if snapshot_error:
                 label = "UNKNOWN"
-                css = "info"
+                css = "warning"
                 note = "snapshot inventory query failed"
             else:
                 latest_name, latest_dt = latest_snapshot(
@@ -2956,7 +2957,7 @@ def normalize_config_truenas_replication_hosts(hosts):
 
 def config_replication_status(task):
     if not task.get("enabled", True):
-        return "DISABLED", "disabled", "replication task disabled"
+        return "DISABLED", "warning", "replication task disabled"
 
     state = task.get("state") or {}
 
@@ -3009,7 +3010,7 @@ def collect_config_truenas_replication_checks(hosts):
                 "execution_time": "-",
                 "last_snapshot": "-",
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": "missing host address",
             })
             errors.append(f"{host_id}: missing host address")
@@ -3035,7 +3036,7 @@ def collect_config_truenas_replication_checks(hosts):
                 "execution_time": "-",
                 "last_snapshot": "-",
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": "replication task query failed",
             })
             errors.append(f"{host_id}: {task_error}")
@@ -3056,7 +3057,7 @@ def collect_config_truenas_replication_checks(hosts):
                 "execution_time": "-",
                 "last_snapshot": "-",
                 "label": "UNKNOWN",
-                "css": "info",
+                "css": "warning",
                 "raw": "unexpected replication task response",
             })
             errors.append(
@@ -6393,43 +6394,190 @@ def build_public_storage_summary_card(
 
 
 
-def build_public_protection_summary_card(relationships, statuses):
-    if not relationships:
+def build_public_protection_summary_card(
+    relationships,
+    statuses,
+    backup_checks=None,
+    backup_statuses=None,
+    snapshot_rows=None,
+    replication_rows=None,
+):
+    relationships = relationships or []
+    statuses = statuses or {}
+    backup_checks = backup_checks or []
+    backup_statuses = backup_statuses or {}
+    snapshot_rows = snapshot_rows or []
+    replication_rows = replication_rows or []
+
+    if (
+        not relationships
+        and not backup_checks
+        and not snapshot_rows
+        and not replication_rows
+    ):
         return build_public_summary_card(
             "Protection",
-            "No protection relationships configured yet",
-            build_public_summary_detail("protection", "INFO", "info"),
+            "No protection checks configured yet",
+            build_public_summary_detail(
+                "protection",
+                "INFO",
+                "info",
+            ),
             "info",
         )
 
-    configured_count = 0
-    incomplete_count = 0
+    ok_count = 0
+    warning_count = 0
     bad_count = 0
     info_count = 0
+    detail_count = 0
     details = ""
 
-    for relationship in relationships:
-        relationship_id = relationship["id"]
-        name = relationship.get("name") or relationship_id
-        status = statuses.get(relationship_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
+    def add_result(name, status):
+        nonlocal ok_count
+        nonlocal warning_count
+        nonlocal bad_count
+        nonlocal info_count
+        nonlocal detail_count
+        nonlocal details
+
+        status = status or {}
         label = status.get("label", "UNKNOWN")
         css = status.get("css", "info")
 
-        if label == "CONFIGURED" or css == "ok":
-            configured_count += 1
-        elif label == "INCOMPLETE" or css == "warning":
-            incomplete_count += 1
-        elif css == "bad":
+        if css == "bad":
             bad_count += 1
+        elif css in {"warning", "disabled"}:
+            warning_count += 1
+        elif css == "ok":
+            ok_count += 1
         else:
             info_count += 1
 
-        details += build_public_summary_detail(name, label, css)
+        details += build_public_summary_detail(
+            name,
+            label,
+            css,
+        )
+        detail_count += 1
 
-    value = f"{len(relationships)} Relationships · {configured_count} CONFIGURED · {incomplete_count} INCOMPLETE"
+    for check in backup_checks:
+        check_id = check["id"]
+        name = (
+            check.get("name")
+            or check.get("label")
+            or check_id
+        )
 
-    if bad_count:
-        value += f" · {bad_count} BAD"
+        add_result(
+            f"Backup · {name}",
+            backup_statuses.get(
+                check_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "warning",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    for row in snapshot_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        dataset = row.get("dataset") or "-"
+
+        if dataset == "-":
+            name = f"Snapshot · {host_name}"
+        else:
+            name = (
+                f"Snapshot · {host_name} · {dataset}"
+            )
+
+        add_result(name, row)
+
+    for row in replication_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        task_name = (
+            row.get("name")
+            or row.get("task_id")
+            or "-"
+        )
+
+        if task_name == "-":
+            name = f"Replication · {host_name}"
+        else:
+            name = (
+                f"Replication · {host_name} · "
+                f"{task_name}"
+            )
+
+        add_result(name, row)
+
+    for relationship in relationships:
+        relationship_id = relationship["id"]
+        name = (
+            relationship.get("name")
+            or relationship_id
+        )
+
+        add_result(
+            f"Relationship · {name}",
+            statuses.get(
+                relationship_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "warning",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    inventory_parts = []
+
+    def add_inventory(count, singular):
+        if not count:
+            return
+
+        label = (
+            singular
+            if count == 1
+            else singular + "s"
+        )
+        inventory_parts.append(
+            f"{count} {label}"
+        )
+
+    add_inventory(
+        len(backup_checks),
+        "Backup",
+    )
+    add_inventory(
+        len(snapshot_rows),
+        "Snapshot",
+    )
+    add_inventory(
+        len(replication_rows),
+        "Replication",
+    )
+    add_inventory(
+        len(relationships),
+        "Relationship",
+    )
+
+    value = (
+        " · ".join(inventory_parts)
+        + f" · {ok_count} OK"
+        + f" · {warning_count} WARNING"
+        + f" · {bad_count} CRITICAL"
+    )
+
     if info_count:
         value += f" · {info_count} INFO"
 
@@ -6437,8 +6585,16 @@ def build_public_protection_summary_card(relationships, statuses):
         "Protection",
         value,
         details,
-        public_card_css(bad_count, incomplete_count, info_count),
-        "two-column" if len(relationships) > 6 else "",
+        public_card_css(
+            bad_count,
+            warning_count,
+            info_count,
+        ),
+        (
+            "two-column"
+            if detail_count > 6
+            else ""
+        ),
     )
 
 
@@ -6478,6 +6634,10 @@ def build_public_four_card_summary_preview(
     pool_host_statuses=None,
     disk_health_rows=None,
     disk_health_host_statuses=None,
+    backup_checks=None,
+    backup_statuses=None,
+    snapshot_rows=None,
+    replication_rows=None,
 ):
     builders = {
         "systems": lambda: build_public_systems_summary_card(
@@ -6498,6 +6658,10 @@ def build_public_four_card_summary_preview(
         "protection": lambda: build_public_protection_summary_card(
             protection_relationships,
             protection_statuses,
+            backup_checks,
+            backup_statuses,
+            snapshot_rows,
+            replication_rows,
         ),
         "services": lambda: build_public_services_summary_card(
             services,
@@ -6852,7 +7016,7 @@ def freshness_status(task, latest_dt):
         return "UNKNOWN", "warning", "-"
 
     if not task.get("enabled"):
-        return "DISABLED", "disabled", "snapshot task disabled"
+        return "DISABLED", "warning", "snapshot task disabled"
 
     if not latest_dt:
         return "MISSING", "bad", "no snapshot found"
@@ -8324,6 +8488,10 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     disk_health_host_statuses=(
         config_truenas_disk_health_statuses
     ),
+    backup_checks=config_backup_checks,
+    backup_statuses=config_backup_statuses,
+    snapshot_rows=config_truenas_snapshot_rows,
+    replication_rows=config_truenas_replication_rows,
 )
 
 if DASHBOARD_RUNTIME_MODE == "public":

@@ -294,6 +294,56 @@ Temperature and SMART results intentionally do not contribute to global
 Overall Status yet. That severity boundary remains assigned to
 Phase 3C.6.
 
+## Phase 3C.5 completion — data-protection severity parity
+
+Phase 3C.5 establishes one deterministic public severity contract
+across the configuration-driven data-protection domain.
+
+The public Protection summary card now aggregates:
+
+- configured backup-marker checks;
+- live TrueNAS snapshot-task rows;
+- live TrueNAS replication-task rows;
+- configured protection relationships and their live overlays.
+
+Protection results use worst-state precedence:
+
+```text
+CRITICAL > WARNING > INFO > OK
+```
+
+The normalized contract is:
+
+- `CRITICAL`: missing backup markers, missing required snapshots,
+  and failed, errored, or aborted replication tasks;
+- `WARNING`: stale backups, inactive or uncertain timers, stale or
+  disabled snapshot tasks, paused or disabled replication tasks,
+  unknown states, malformed responses, SSH failures, parsing
+  failures, schedule uncertainty, and collector uncertainty;
+- `INFO`: active replication states such as `RUNNING`, `PENDING`,
+  and `WAITING`, plus configuration-only relationship intent;
+- `OK`: current backup markers, fresh snapshots, successful
+  replication tasks, and healthy matched relationships.
+
+Unknown protection-check results are therefore warning-grade and
+cannot silently leave the Protection card healthy. Disabled
+snapshot and replication tasks are also warning-grade because an
+expected protection mechanism is not operating.
+
+Relationship overlays retain their conservative matching rules.
+Snapshot status propagates only when every configured dataset has
+confident coverage. Replication status propagates only when source
+host, source datasets, and target prefix match confidently. When
+both sources match, the worst live severity wins.
+
+The change is isolated to the configuration-driven Protection
+domain. Global Overall Status remains unchanged and is reserved
+for Phase 3C.6.
+
+Deterministic validation completed with 230 passing tests. An
+isolated public render confirmed the integrated Protection card
+contract without modifying the production dashboard.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -309,6 +359,7 @@ Phase 3C.6.
                  Complete
 
     Phase 3C.5  Data-protection severity parity
+                 Complete
 
     Phase 3C.6  Unified public Overall Status and collector-error parity
 

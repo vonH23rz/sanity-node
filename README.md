@@ -268,12 +268,17 @@ Completed configuration-driven behavior:
 - configured backup checks can report collector-local or eligible remote Linux marker-file freshness and optional systemd timer state
 - Collector Errors include a classified Type badge for timeouts, network failures, host-key problems, authentication failures, refused connections, parsing failures, command failures, unknown messages, and other errors
 - all Collector Errors remain failure rows; classification improves presentation only and does not change Overall Status handling
-- configured protection relationships can render preview backup/replication relationships from `config.yaml`
+- the Protection summary card aggregates configured backup checks, live snapshot-task rows, live replication-task rows, and configured protection relationships
+- protection results use one public severity contract: `CRITICAL` overrides `WARNING`, which overrides `INFO`, which overrides `OK`
+- missing backup markers and missing snapshots are critical; stale backups, inactive timers, stale snapshots, paused tasks, and disabled protection tasks are warnings
+- backup, snapshot, replication, parsing, schedule, SSH, and collector uncertainty is warning-grade instead of being allowed to appear healthy
+- active replication states such as `RUNNING`, `PENDING`, and `WAITING` remain informational
+- configured protection relationships can render preview backup/replication intent from `config.yaml`
 - replication relationships can inherit live task status when source host, configured datasets, and target prefix confidently match a discovered TrueNAS replication task
 - replication relationships can also inherit live snapshot status when every configured dataset is confidently covered by an exact snapshot task or an explicitly recursive ancestor task
 - recursive snapshot coverage respects TrueNAS exclusion paths; missing, malformed, partial, or ambiguous coverage leaves the relationship unchanged
-- snapshot and replication overlays combine using worst-severity precedence, while a live `OK` relationship still counts as configured
-- unmatched or incomplete relationships retain their configured status instead of being treated as failures
+- snapshot and replication relationship overlays combine using worst-severity precedence, while a live `OK` relationship still counts as healthy
+- unmatched or incomplete relationships retain their configured status instead of being treated as collector failures
 - configured `summary_cards` select and order the public dashboard summary cards: Systems, Storage, Protection, and Services
 - `summary_cards` controls card order and selection; duplicate names are removed, unknown names are ignored, and an empty/invalid list falls back to the default four cards
 - public mode renders only the selected summary cards and suppresses the older host-based preview row
@@ -495,7 +500,9 @@ The host must be enabled, use `type: truenas`, have an `address`, and have `modu
 
 Configured replication relationships can use these live snapshot rows as a precondition overlay. Every configured relationship dataset must be confidently covered. An exact task dataset always qualifies. An ancestor task qualifies only when `recursive` is explicitly `true`, the configured dataset is below that task dataset on a dataset boundary, and no TrueNAS exclusion equals or contains the configured dataset. Missing or malformed recursion/exclusion metadata, partial coverage, and collector failures do not convert an unmatched relationship into a warning or failure.
 
-Snapshot preview and Protection-overlay results do not affect Overall Status, and the original hardcoded snapshot cards remain untouched.
+Snapshot rows now contribute directly to the public Protection summary card. Fresh tasks are `OK`; old or disabled tasks and collection uncertainty are `WARNING`; enabled tasks without a snapshot are `CRITICAL`. Relationship overlays continue to require confident dataset coverage.
+
+Snapshot and Protection-card results do not affect global Overall Status, and the original hardcoded snapshot cards remain untouched.
 
 ### TrueNAS replication checks
 
@@ -521,7 +528,9 @@ For each matching host, Sanity Node:
 - shows the last execution time and last snapshot when available
 - reports when no replication tasks are configured
 
-The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials. Results do not affect Overall Status yet, and the original hardcoded replication table remains untouched.
+The host must be enabled, use `type: truenas`, have an `address`, and have `modules.replications` set to `true`. The preview uses the configured Sanity Node SSH credentials.
+
+Replication rows now contribute directly to the public Protection summary card. Successful tasks are `OK`; active tasks remain informational; paused, disabled, unknown, or malformed states are warnings; failed, errored, or aborted tasks are critical. These results do not affect global Overall Status, and the original hardcoded replication table remains untouched.
 
 Configured replication relationships can use these live rows as an informational overlay. A match requires the same `source_host`, every configured relationship dataset to exist in the task's source datasets, and the task target dataset to equal or sit below the configured `target_prefix`. When several tasks match, the most severe live state is shown. Relationships without a confident match retain their existing configured status.
 
@@ -616,7 +625,9 @@ To avoid rendering the same complete service inventory twice, host-based cards u
 
 The Systems card normally reflects each enabled host's Web UI check. When all configured TrueNAS app checks for a host are `UNKNOWN` because of a recognized SSH or network timeout, that host is instead shown as `UNREACHABLE` and counted as `DOWN`. Authentication failures, host-key failures, connection refusal, parsing errors, partial app success, Linux hosts, and HTTP-only hosts retain the existing Web UI-based Systems status.
 
-The Protection card normally reflects configuration completeness. Confidently matched live replication tasks and complete snapshot coverage can replace `CONFIGURED` with their current live status. Every configured dataset must be covered before snapshot status propagates. When both live sources match, the worst severity wins. A live `OK` relationship still counts as configured.
+The Protection card aggregates every enabled protection domain rather than reflecting relationship configuration alone. It includes backup-marker checks, snapshot-task results, replication-task results, and configured relationships. Its card state follows `CRITICAL > WARNING > INFO > OK`, and its summary reports inventory and severity totals across all four sources.
+
+Confidently matched live replication tasks and complete snapshot coverage can still replace a relationship's `CONFIGURED` state with current live status. Every configured dataset must be covered before snapshot status propagates. When snapshot and replication overlays both match, the worst severity wins. A live `OK` relationship counts as healthy.
 
 These propagations are preview-only and do not affect Overall Status or the original hardcoded summary cards.
 
@@ -900,13 +911,16 @@ The principal remaining parity gaps are:
 - deterministic collector-error severity
 - production migration and cutover rehearsal
 
-The validated remaining Phase 3C sequence is:
+The validated Phase 3C sequence is:
 
     Phase 3C.2  Config-driven host system information parity
                  COMPLETE
     Phase 3C.3  Config-driven TrueNAS pool capacity and health parity
+                 COMPLETE
     Phase 3C.4  Config-driven TrueNAS temperature and SMART parity
+                 COMPLETE
     Phase 3C.5  Data-protection severity parity
+                 COMPLETE
     Phase 3C.6  Unified Overall Status and collector-error parity
     Phase 3C.7  Public schema and presentation consolidation
     Phase 3C.8  Production configuration migration rehearsal
