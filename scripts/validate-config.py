@@ -370,6 +370,34 @@ def validate_config(config: dict) -> Validator:
                         "for a remote host",
                     )
 
+            pools_enabled = (
+                isinstance(modules, dict)
+                and modules.get("pools") is True
+            )
+
+            if enabled and pools_enabled:
+                if (
+                    host_type is None
+                    or host_type.lower() != "truenas"
+                ):
+                    validator.error(
+                        f"{path}.modules.pools",
+                        "requires host type: truenas",
+                    )
+                else:
+                    ssh_value = host.get("ssh")
+
+                    if not isinstance(ssh_value, dict):
+                        validator.error(
+                            f"{path}.ssh",
+                            "is required when modules.pools is true",
+                        )
+                    elif ssh_value.get("enabled") is not True:
+                        validator.error(
+                            f"{path}.ssh.enabled",
+                            "must be true when modules.pools is true",
+                        )
+
         if not enabled_host_ids:
             validator.error("hosts", "must contain at least one enabled host")
 

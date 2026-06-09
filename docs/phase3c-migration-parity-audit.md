@@ -237,6 +237,36 @@ The public runtime now supports:
 System-information results intentionally do not contribute to global Overall
 Status yet. That severity boundary remains assigned to Phase 3C.6.
 
+## Phase 3C.3 completion
+
+Phase 3C.3 operationalized `modules.pools` while preserving the
+reference runtime unchanged.
+
+The public runtime now supports:
+
+- enabled TrueNAS pool hosts selected through `modules.pools: true`;
+- explicit host-specific SSH identities and startup-preflight discovery;
+- live `midclt call pool.query` collection;
+- pool name, ZFS status, total capacity, allocated capacity, available
+  capacity, and calculated allocation percentage;
+- conservative `OK`, `WARNING`, `CRITICAL`, and `UNKNOWN` pool-health
+  classification;
+- `NOT CHECKED`, `UNKNOWN`, and `UNREACHABLE` host-level failure
+  semantics;
+- generic Configured TrueNAS Pools Runtime Detail output;
+- live pool rows and host failures in the public Storage summary card;
+- configuration validation requiring TrueNAS host type and explicit SSH.
+
+Pool severity intentionally affects only the public Storage card and
+Runtime Detail. It does not yet contribute to global Overall Status;
+that unified severity boundary remains assigned to Phase 3C.6.
+
+Validation included 212 deterministic regression tests, official and
+starter configuration validation, real read-only pool queries against
+two TrueNAS hosts with seven pools discovered, deterministic faulted-pool
+severity testing, public/reference isolation, and unchanged production
+dashboard output.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -246,7 +276,7 @@ Status yet. That severity boundary remains assigned to Phase 3C.6.
                  Complete
 
     Phase 3C.3  Config-driven TrueNAS pool capacity and health parity
-                 Operationalize modules.pools
+                 Complete
 
     Phase 3C.4  Config-driven TrueNAS temperature and SMART parity
 

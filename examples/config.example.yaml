@@ -70,6 +70,8 @@ collector:
 # - the host must provide an address and explicit enabled SSH settings
 #
 # For enabled type: truenas hosts:
+# - modules.pools: true activates live pool inventory, capacity,
+#   allocation percentage, and conservative ZFS health checks
 # - modules.snapshots: true activates live periodic snapshot-task and
 #   latest-snapshot freshness checks
 # - modules.replications: true activates live replication-task and
@@ -104,7 +106,7 @@ hosts:
 
     modules:
       system_info: true          # collect generic host telemetry
-      pools: true                # true/false
+      pools: true                # live pool capacity and health check
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
       apps: true                 # true/false
@@ -136,7 +138,7 @@ hosts:
 
     modules:
       system_info: true          # collect generic host telemetry
-      pools: true                # true/false
+      pools: true                # live pool capacity and health check
       snapshots: true            # live task and snapshot freshness check
       replications: false        # live task and execution-state check
       apps: false                # true/false

@@ -3973,6 +3973,551 @@ def build_config_system_info_preview(hosts, statuses):
 """
 
 
+def normalize_config_truenas_pool_hosts(hosts):
+    normalized = []
+
+    for host in hosts or []:
+        if not isinstance(host, dict):
+            continue
+
+        host_id = str(host.get("id") or "").strip()
+        host_key = configured_host_key(host)
+        host_type = str(host.get("type") or "").strip().lower()
+        modules = host.get("modules")
+        modules = modules if isinstance(modules, dict) else {}
+
+        if (
+            host_type != "truenas"
+            and modules.get("pools") is not True
+        ):
+            continue
+
+        if not host_key:
+            continue
+
+        display_name = configured_host_display_name(host)
+        enabled = bool(host.get("enabled", True))
+        address = str(host.get("address") or "").strip()
+        ssh = host.get("ssh")
+        ssh = ssh if isinstance(ssh, dict) else {}
+
+        item = {
+            "key": host_key,
+            "id": host_id,
+            "display_name": display_name,
+            "type": host_type,
+            "address": address,
+            "eligible": False,
+            "reason": "pools module disabled",
+            "ssh_user": "",
+            "ssh_key_file": "",
+        }
+
+        if not enabled:
+            item["reason"] = "host disabled"
+        elif host_type != "truenas":
+            item["reason"] = "pool monitoring requires a TrueNAS host"
+        elif modules.get("pools") is not True:
+            item["reason"] = "pools module disabled"
+        elif not address:
+            item["reason"] = "missing host address"
+        elif ssh.get("enabled") is not True:
+            item["reason"] = (
+                "host SSH configuration missing or disabled"
+            )
+        else:
+            ssh_user = str(ssh.get("user") or "").strip()
+            ssh_key_file = str(
+                ssh.get("key_file") or ""
+            ).strip()
+
+            if not ssh_user:
+                item["reason"] = "missing ssh.user"
+            elif not ssh_key_file:
+                item["reason"] = "missing ssh.key_file"
+            else:
+                item["eligible"] = True
+                item["reason"] = "TrueNAS pool monitoring"
+                item["ssh_user"] = ssh_user
+                item["ssh_key_file"] = ssh_key_file
+
+        normalized.append(item)
+
+    return normalized
+
+
+def config_pool_integer(value):
+    if value is None or isinstance(value, bool):
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number < 0:
+        return None
+
+    return number
+
+
+def config_format_bytes(value):
+    number = config_pool_integer(value)
+
+    if number is None:
+        return "-"
+
+    if number == 0:
+        return "0 B"
+
+    amount = float(number)
+    units = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
+
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(amount)} B"
+
+            return f"{amount:.1f} {unit}"
+
+        amount /= 1024
+
+    return "-"
+
+
+def config_pool_usage_percent(allocated, size):
+    allocated_bytes = config_pool_integer(allocated)
+    size_bytes = config_pool_integer(size)
+
+    if (
+        allocated_bytes is None
+        or size_bytes is None
+        or size_bytes <= 0
+    ):
+        return None
+
+    return round(
+        (allocated_bytes / size_bytes) * 100,
+        1,
+    )
+
+
+def config_truenas_pool_health(pool):
+    if not isinstance(pool, dict):
+        return (
+            "UNKNOWN",
+            "info",
+            "pool entry is not a mapping",
+        )
+
+    status = str(pool.get("status") or "").strip().upper()
+    status_code = str(
+        pool.get("status_code") or ""
+    ).strip().upper()
+    status_detail = str(
+        pool.get("status_detail") or ""
+    ).strip()
+    healthy = pool.get("healthy")
+    warning = pool.get("warning")
+
+    critical_states = {
+        "FAULTED",
+        "OFFLINE",
+        "UNAVAIL",
+        "REMOVED",
+        "SUSPENDED",
+    }
+
+    if status in critical_states:
+        return (
+            "CRITICAL",
+            "bad",
+            status_detail or f"pool status {status}",
+        )
+
+    if status == "DEGRADED":
+        return (
+            "WARNING",
+            "warning",
+            status_detail or "pool status DEGRADED",
+        )
+
+    if status == "ONLINE":
+        warning_reasons = []
+
+        if healthy is False:
+            warning_reasons.append("healthy=false")
+
+        if warning is True:
+            warning_reasons.append("warning=true")
+
+        if status_code not in {"", "OK"}:
+            warning_reasons.append(
+                f"status_code={status_code}"
+            )
+
+        if warning_reasons:
+            return (
+                "WARNING",
+                "warning",
+                status_detail
+                or "online pool reported "
+                + ", ".join(warning_reasons),
+            )
+
+        if (
+            healthy is True
+            and warning is False
+            and status_code in {"", "OK"}
+        ):
+            return (
+                "OK",
+                "ok",
+                status_detail or "pool is ONLINE",
+            )
+
+        return (
+            "UNKNOWN",
+            "info",
+            status_detail
+            or "ONLINE pool health metadata is incomplete",
+        )
+
+    return (
+        "UNKNOWN",
+        "info",
+        status_detail
+        or (
+            f"unrecognized pool status {status}"
+            if status
+            else "missing pool status"
+        ),
+    )
+
+
+def parse_config_truenas_pool_payload(host, output):
+    try:
+        payload = json.loads(str(output or "").strip())
+    except Exception as exc:
+        return (
+            [],
+            f"invalid pool.query JSON: {exc}",
+        )
+
+    if not isinstance(payload, list):
+        return (
+            [],
+            "pool.query did not return a list",
+        )
+
+    rows = []
+
+    for index, pool in enumerate(payload, start=1):
+        if not isinstance(pool, dict):
+            return (
+                [],
+                f"pool entry {index} is not a mapping",
+            )
+
+        pool_name = str(pool.get("name") or "").strip()
+        status = str(pool.get("status") or "").strip().upper()
+
+        if not pool_name:
+            return (
+                [],
+                f"pool entry {index} is missing name",
+            )
+
+        if not status:
+            return (
+                [],
+                f"pool {pool_name} is missing status",
+            )
+
+        size_bytes = config_pool_integer(pool.get("size"))
+        allocated_bytes = config_pool_integer(
+            pool.get("allocated")
+        )
+        available_bytes = config_pool_integer(
+            pool.get("free")
+        )
+        used_percent = config_pool_usage_percent(
+            allocated_bytes,
+            size_bytes,
+        )
+        label, css, note = config_truenas_pool_health(pool)
+
+        rows.append({
+            "host_id": host.get("id", ""),
+            "host_key": host.get("key", ""),
+            "host_name": host.get(
+                "display_name",
+                "Configured TrueNAS",
+            ),
+            "pool_name": pool_name,
+            "path": str(pool.get("path") or "-"),
+            "status": status,
+            "status_code": str(
+                pool.get("status_code") or ""
+            ).strip().upper(),
+            "status_detail": str(
+                pool.get("status_detail") or ""
+            ).strip(),
+            "healthy": pool.get("healthy"),
+            "warning": pool.get("warning"),
+            "size_bytes": size_bytes,
+            "allocated_bytes": allocated_bytes,
+            "available_bytes": available_bytes,
+            "used_percent": used_percent,
+            "fragmentation": str(
+                pool.get("fragmentation") or "-"
+            ),
+            "label": label,
+            "css": css,
+            "raw": note,
+        })
+
+    rows.sort(
+        key=lambda row: (
+            str(row.get("host_name") or "").lower(),
+            str(row.get("pool_name") or "").lower(),
+        )
+    )
+
+    return rows, None
+
+
+def collect_config_truenas_pools(hosts):
+    rows = []
+    statuses = {}
+    errors = []
+
+    for host in hosts:
+        host_key = host["key"]
+        base_status = {
+            "host_id": host.get("id", ""),
+            "display_name": host.get(
+                "display_name",
+                "Configured TrueNAS",
+            ),
+            "pool_count": 0,
+        }
+
+        if not host.get("eligible"):
+            statuses[host_key] = {
+                **base_status,
+                "label": "NOT CHECKED",
+                "css": "info",
+                "reachable": None,
+                "raw": host.get("reason") or "host not eligible",
+            }
+            continue
+
+        returncode, output = run_config_host_ssh(
+            host,
+            "midclt call pool.query",
+            timeout=30,
+        )
+
+        if returncode != 0:
+            raw = output or "TrueNAS pool query failed"
+            unreachable = config_error_indicates_host_unreachable(
+                raw
+            )
+            statuses[host_key] = {
+                **base_status,
+                "label": (
+                    "UNREACHABLE"
+                    if unreachable
+                    else "UNKNOWN"
+                ),
+                "css": "bad" if unreachable else "info",
+                "reachable": False,
+                "raw": raw,
+            }
+            errors.append(
+                f"{host.get('display_name')}: {raw}"
+            )
+            continue
+
+        host_rows, parse_error = (
+            parse_config_truenas_pool_payload(
+                host,
+                output,
+            )
+        )
+
+        if parse_error:
+            statuses[host_key] = {
+                **base_status,
+                "label": "UNKNOWN",
+                "css": "info",
+                "reachable": False,
+                "raw": parse_error,
+            }
+            errors.append(
+                f"{host.get('display_name')}: {parse_error}"
+            )
+            continue
+
+        if not host_rows:
+            statuses[host_key] = {
+                **base_status,
+                "label": "INFO",
+                "css": "info",
+                "reachable": True,
+                "raw": "no pools discovered",
+            }
+            continue
+
+        bad_count = sum(
+            row.get("css") == "bad"
+            for row in host_rows
+        )
+        warning_count = sum(
+            row.get("css") == "warning"
+            for row in host_rows
+        )
+        info_count = sum(
+            row.get("css") == "info"
+            for row in host_rows
+        )
+
+        if bad_count:
+            label = "CRITICAL"
+            css = "bad"
+        elif warning_count:
+            label = "WARNING"
+            css = "warning"
+        elif info_count:
+            label = "UNKNOWN"
+            css = "info"
+        else:
+            label = "OK"
+            css = "ok"
+
+        statuses[host_key] = {
+            **base_status,
+            "pool_count": len(host_rows),
+            "label": label,
+            "css": css,
+            "reachable": True,
+            "raw": f"{len(host_rows)} pools discovered",
+        }
+        rows.extend(host_rows)
+
+    return rows, statuses, errors
+
+
+def build_config_truenas_pool_preview(hosts, rows, statuses):
+    if not hosts:
+        return ""
+
+    statuses = statuses or {}
+    rows_by_host = {}
+
+    for row in rows or []:
+        rows_by_host.setdefault(
+            row.get("host_key"),
+            [],
+        ).append(row)
+
+    table_rows = ""
+    checked_count = 0
+    not_checked_count = 0
+
+    for host in sorted(
+        hosts,
+        key=configured_host_sort_key,
+    ):
+        host_key = host["key"]
+        host_name = host.get(
+            "display_name",
+            "Configured TrueNAS",
+        )
+        status = statuses.get(
+            host_key,
+            {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "pool status unavailable",
+            },
+        )
+        host_rows = rows_by_host.get(host_key, [])
+
+        if status.get("label") == "NOT CHECKED":
+            not_checked_count += 1
+        else:
+            checked_count += 1
+
+        if not host_rows:
+            table_rows += f"""
+      <tr class="{h(status.get("css", "info"))}">
+        <td>{badge(status.get("label", "UNKNOWN"), status.get("css", "info"))}</td>
+        <td>{h(host_name)}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+      </tr>
+"""
+            continue
+
+        for row in host_rows:
+            used_percent = row.get("used_percent")
+            usage = (
+                "-"
+                if used_percent is None
+                else f"{used_percent:.1f}%"
+            )
+
+            table_rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+        <td>{h(host_name)}</td>
+        <td><strong>{h(row.get("pool_name", "-"))}</strong></td>
+        <td>{h(row.get("status", "-"))}</td>
+        <td>{h(config_format_bytes(row.get("size_bytes")))}</td>
+        <td>{h(config_format_bytes(row.get("allocated_bytes")))}</td>
+        <td>{h(config_format_bytes(row.get("available_bytes")))}</td>
+        <td>{h(usage)}</td>
+      </tr>
+"""
+
+    host_count = len(hosts)
+    pool_count = len(rows or [])
+    host_word = "host" if host_count == 1 else "hosts"
+    pool_word = "pool" if pool_count == 1 else "pools"
+
+    return f"""
+  <div class="configured-hosts-preview">
+    <div class="configured-hosts-preview-header">
+      <div>
+        <div class="configured-hosts-kicker">Config Preview</div>
+        <h3>Configured TrueNAS Pools</h3>
+      </div>
+      <div class="configured-hosts-meta">{h(host_count)} {h(host_word)} · {h(pool_count)} {h(pool_word)} · {h(checked_count)} checked · {h(not_checked_count)} not checked</div>
+    </div>
+    <p class="muted-small">Live pool inventory, capacity, and ZFS health checks are active for eligible TrueNAS hosts with modules.pools set to true. These preview results do not affect Overall Status yet.</p>
+    <table>
+      <tr>
+        <th>Result</th>
+        <th>Host</th>
+        <th>Pool</th>
+        <th>Health</th>
+        <th>Size</th>
+        <th>Used</th>
+        <th>Available</th>
+        <th>Usage</th>
+      </tr>
+      {table_rows}
+    </table>
+  </div>
+"""
+
+
 def build_configured_hosts_preview(hosts, web_statuses=None):
     if not hosts:
         return ""
@@ -4591,12 +5136,49 @@ def build_public_systems_summary_card(
     )
 
 
-def build_public_storage_summary_card(checks, statuses):
-    if not checks:
+def build_public_storage_summary_card(
+    checks,
+    statuses,
+    pool_rows=None,
+    pool_host_statuses=None,
+):
+    checks = checks or []
+    statuses = statuses or {}
+    pool_rows = pool_rows or []
+    pool_host_statuses = pool_host_statuses or {}
+
+    row_host_keys = {
+        row.get("host_key")
+        for row in pool_rows
+        if row.get("host_key")
+    }
+
+    pool_host_only_statuses = [
+        status
+        for host_key, status in sorted(
+            pool_host_statuses.items(),
+            key=lambda item: str(
+                item[1].get("display_name")
+                or item[0]
+            ).lower(),
+        )
+        if host_key not in row_host_keys
+        and status.get("label") != "NOT CHECKED"
+    ]
+
+    if (
+        not checks
+        and not pool_rows
+        and not pool_host_only_statuses
+    ):
         return build_public_summary_card(
             "Storage",
             "No storage checks configured yet",
-            build_public_summary_detail("local_storage", "INFO", "info"),
+            build_public_summary_detail(
+                "local_storage",
+                "INFO",
+                "info",
+            ),
             "info",
         )
 
@@ -4605,13 +5187,15 @@ def build_public_storage_summary_card(checks, statuses):
     bad_count = 0
     info_count = 0
     details = ""
+    detail_count = 0
 
-    for check in checks:
-        check_id = check["id"]
-        name = check.get("label") or check.get("mount") or check_id
-        status = statuses.get(check_id, {"label": "UNKNOWN", "css": "info", "raw": "-"})
-        label = status.get("label", "UNKNOWN")
-        css = status.get("css", "info")
+    def add_result(name, label, css):
+        nonlocal ok_count
+        nonlocal warning_count
+        nonlocal bad_count
+        nonlocal info_count
+        nonlocal details
+        nonlocal detail_count
 
         if label == "OK":
             ok_count += 1
@@ -4622,9 +5206,72 @@ def build_public_storage_summary_card(checks, statuses):
         else:
             info_count += 1
 
-        details += build_public_summary_detail(name, label, css)
+        details += build_public_summary_detail(
+            name,
+            label,
+            css,
+        )
+        detail_count += 1
 
-    value = f"{len(checks)} Checks · {ok_count} OK · {warning_count} WARNING · {bad_count} CRITICAL"
+    for check in checks:
+        check_id = check["id"]
+        name = (
+            check.get("label")
+            or check.get("mount")
+            or check_id
+        )
+        status = statuses.get(
+            check_id,
+            {
+                "label": "UNKNOWN",
+                "css": "info",
+                "raw": "-",
+            },
+        )
+
+        add_result(
+            name,
+            status.get("label", "UNKNOWN"),
+            status.get("css", "info"),
+        )
+
+    for row in pool_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        pool_name = row.get("pool_name") or "Unknown pool"
+
+        add_result(
+            f"{host_name} · {pool_name}",
+            row.get("label", "UNKNOWN"),
+            row.get("css", "info"),
+        )
+
+    for status in pool_host_only_statuses:
+        add_result(
+            status.get("display_name")
+            or status.get("host_id")
+            or "Configured TrueNAS",
+            status.get("label", "UNKNOWN"),
+            status.get("css", "info"),
+        )
+
+    inventory_parts = []
+
+    if checks:
+        inventory_parts.append(f"{len(checks)} Checks")
+
+    if pool_rows or pool_host_only_statuses:
+        inventory_parts.append(f"{len(pool_rows)} Pools")
+
+    value = (
+        " · ".join(inventory_parts)
+        + f" · {ok_count} OK"
+        + f" · {warning_count} WARNING"
+        + f" · {bad_count} CRITICAL"
+    )
 
     if info_count:
         value += f" · {info_count} INFO"
@@ -4633,9 +5280,14 @@ def build_public_storage_summary_card(checks, statuses):
         "Storage",
         value,
         details,
-        public_card_css(bad_count, warning_count, info_count),
-        "two-column" if len(checks) > 6 else "",
+        public_card_css(
+            bad_count,
+            warning_count,
+            info_count,
+        ),
+        "two-column" if detail_count > 6 else "",
     )
+
 
 
 def build_public_protection_summary_card(relationships, statuses):
@@ -4719,6 +5371,8 @@ def build_public_four_card_summary_preview(
     summary_cards,
     promoted=False,
     system_info_statuses=None,
+    pool_rows=None,
+    pool_host_statuses=None,
 ):
     builders = {
         "systems": lambda: build_public_systems_summary_card(
@@ -4728,7 +5382,12 @@ def build_public_four_card_summary_preview(
             service_statuses,
             system_info_statuses,
         ),
-        "storage": lambda: build_public_storage_summary_card(local_storage_checks, local_storage_statuses),
+        "storage": lambda: build_public_storage_summary_card(
+            local_storage_checks,
+            local_storage_statuses,
+            pool_rows,
+            pool_host_statuses,
+        ),
         "protection": lambda: build_public_protection_summary_card(protection_relationships, protection_statuses),
         "services": lambda: build_public_services_summary_card(services, service_statuses),
     }
@@ -6095,6 +6754,46 @@ if eligible_system_info_hosts:
         f"{len(eligible_system_info_hosts)}"
     )
 
+config_truenas_pool_hosts = normalize_config_truenas_pool_hosts(
+    CONFIG_HOSTS
+)
+(
+    config_truenas_pool_rows,
+    config_truenas_pool_statuses,
+    config_truenas_pool_errors,
+) = collect_config_truenas_pools(
+    config_truenas_pool_hosts
+)
+
+for error in config_truenas_pool_errors:
+    collection_errors.append(
+        ("Configured TrueNAS pool query", error)
+    )
+
+config_truenas_pool_preview_html = (
+    build_config_truenas_pool_preview(
+        config_truenas_pool_hosts,
+        config_truenas_pool_rows,
+        config_truenas_pool_statuses,
+    )
+)
+
+eligible_pool_hosts = [
+    host
+    for host in config_truenas_pool_hosts
+    if host.get("eligible")
+]
+
+if eligible_pool_hosts:
+    print(
+        "Configured TrueNAS pool hosts checked: "
+        f"{len(eligible_pool_hosts)}"
+    )
+    print(
+        "Configured TrueNAS pools discovered: "
+        f"{len(config_truenas_pool_rows)}"
+    )
+
 config_truenas_snapshot_hosts = normalize_config_truenas_snapshot_hosts(CONFIG_HOSTS)
 config_truenas_snapshot_rows, config_truenas_snapshot_errors = collect_config_truenas_snapshot_checks(
     config_truenas_snapshot_hosts,
@@ -6459,6 +7158,8 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     CONFIG_SUMMARY_CARDS,
     promoted=DASHBOARD_RUNTIME_MODE == "public",
     system_info_statuses=config_system_info_statuses,
+    pool_rows=config_truenas_pool_rows,
+    pool_host_statuses=config_truenas_pool_statuses,
 )
 
 if DASHBOARD_RUNTIME_MODE == "public":
@@ -6468,6 +7169,11 @@ if DASHBOARD_RUNTIME_MODE == "public":
     config_system_info_preview_html = (
         promote_public_runtime_detail_html(
             config_system_info_preview_html
+        )
+    )
+    config_truenas_pool_preview_html = (
+        promote_public_runtime_detail_html(
+            config_truenas_pool_preview_html
         )
     )
     config_truenas_snapshot_preview_html = (
@@ -7405,6 +8111,8 @@ pre, .mono {{
   {configured_hosts_preview_html}
 
   {config_system_info_preview_html}
+
+  {config_truenas_pool_preview_html}
 
   {config_truenas_snapshot_preview_html}
 

@@ -43,6 +43,14 @@ FUNCTIONS_UNDER_TEST = {
     "config_system_info_display_os",
     "config_system_info_activity_value",
     "build_config_system_info_preview",
+    "normalize_config_truenas_pool_hosts",
+    "config_pool_integer",
+    "config_format_bytes",
+    "config_pool_usage_percent",
+    "config_truenas_pool_health",
+    "parse_config_truenas_pool_payload",
+    "collect_config_truenas_pools",
+    "build_config_truenas_pool_preview",
     "config_percent",
     "normalize_config_local_storage_checks",
     "config_local_storage_status",
@@ -194,6 +202,30 @@ config_system_info_activity_value = FUNCTIONS[
 ]
 build_config_system_info_preview = FUNCTIONS[
     "build_config_system_info_preview"
+]
+normalize_config_truenas_pool_hosts = FUNCTIONS[
+    "normalize_config_truenas_pool_hosts"
+]
+config_pool_integer = FUNCTIONS[
+    "config_pool_integer"
+]
+config_format_bytes = FUNCTIONS[
+    "config_format_bytes"
+]
+config_pool_usage_percent = FUNCTIONS[
+    "config_pool_usage_percent"
+]
+config_truenas_pool_health = FUNCTIONS[
+    "config_truenas_pool_health"
+]
+parse_config_truenas_pool_payload = FUNCTIONS[
+    "parse_config_truenas_pool_payload"
+]
+collect_config_truenas_pools = FUNCTIONS[
+    "collect_config_truenas_pools"
+]
+build_config_truenas_pool_preview = FUNCTIONS[
+    "build_config_truenas_pool_preview"
 ]
 config_percent = FUNCTIONS[
     "config_percent"
@@ -2299,6 +2331,82 @@ class StorageSummaryCardTests(unittest.TestCase):
         self.assertIn("Archive", card)
         self.assertIn("Backup", card)
         self.assertIn("/mnt/remote", card)
+
+    def test_pool_rows_extend_storage_summary(self):
+        rows = [
+            {
+                "host_key": "nas",
+                "host_name": "Storage Node",
+                "pool_name": "tank",
+                "label": "OK",
+                "css": "ok",
+            },
+            {
+                "host_key": "nas",
+                "host_name": "Storage Node",
+                "pool_name": "archive",
+                "label": "WARNING",
+                "css": "warning",
+            },
+        ]
+
+        card = build_public_storage_summary_card(
+            [],
+            {},
+            rows,
+            {
+                "nas": {
+                    "display_name": "Storage Node",
+                    "label": "WARNING",
+                    "css": "warning",
+                },
+            },
+        )
+
+        self.assertIn(
+            "2 Pools · 1 OK · 1 WARNING · 0 CRITICAL",
+            card,
+        )
+        self.assertIn("Storage Node · tank", card)
+        self.assertIn("Storage Node · archive", card)
+        self.assertIn("summary-card warning", card)
+
+    def test_pool_host_failure_is_counted_but_not_checked_is_ignored(self):
+        card = build_public_storage_summary_card(
+            [
+                {
+                    "id": "root",
+                    "label": "Root",
+                }
+            ],
+            {
+                "root": {
+                    "label": "OK",
+                    "css": "ok",
+                }
+            },
+            [],
+            {
+                "offline": {
+                    "display_name": "Offline NAS",
+                    "label": "UNREACHABLE",
+                    "css": "bad",
+                },
+                "disabled": {
+                    "display_name": "Disabled NAS",
+                    "label": "NOT CHECKED",
+                    "css": "info",
+                },
+            },
+        )
+
+        self.assertIn(
+            "1 Checks · 0 Pools · 1 OK · 0 WARNING · 1 CRITICAL",
+            card,
+        )
+        self.assertIn("Offline NAS", card)
+        self.assertNotIn("Disabled NAS", card)
+        self.assertIn("summary-card bad", card)
 
     def test_storage_details_use_two_columns_above_six_checks(self):
         checks = [
@@ -5392,6 +5500,445 @@ class ConfiguredSystemInfoRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(result, web_down)
+
+
+class ConfiguredTrueNASPoolRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def host(**overrides):
+        host = {
+            "id": "nas",
+            "enabled": True,
+            "display_name": "Storage Node",
+            "hostname": "storage-node",
+            "address": "192.0.2.30",
+            "type": "truenas",
+            "ssh": {
+                "enabled": True,
+                "user": "monitor",
+                "key_file": "/app/ssh/storage-node",
+            },
+            "modules": {
+                "pools": True,
+            },
+        }
+        host.update(overrides)
+        return host
+
+    def test_normalizer_enforces_true_nas_module_and_ssh_gates(self):
+        hosts = [
+            self.host(id="eligible"),
+            self.host(
+                id="module-disabled",
+                modules={"pools": False},
+            ),
+            self.host(
+                id="host-disabled",
+                enabled=False,
+            ),
+            self.host(
+                id="missing-address",
+                address="",
+            ),
+            self.host(
+                id="ssh-disabled",
+                ssh={
+                    "enabled": False,
+                    "user": "monitor",
+                    "key_file": "/app/ssh/key",
+                },
+            ),
+            self.host(
+                id="linux-invalid",
+                type="linux",
+            ),
+            {
+                "id": "collector",
+                "enabled": True,
+                "display_name": "Collector",
+                "type": "linux",
+                "modules": {
+                    "pools": False,
+                },
+            },
+        ]
+
+        normalized = normalize_config_truenas_pool_hosts(
+            hosts
+        )
+        by_id = {
+            host["id"]: host
+            for host in normalized
+        }
+
+        self.assertTrue(by_id["eligible"]["eligible"])
+        self.assertEqual(
+            by_id["eligible"]["ssh_user"],
+            "monitor",
+        )
+        self.assertFalse(
+            by_id["module-disabled"]["eligible"]
+        )
+        self.assertEqual(
+            by_id["module-disabled"]["reason"],
+            "pools module disabled",
+        )
+        self.assertFalse(
+            by_id["host-disabled"]["eligible"]
+        )
+        self.assertFalse(
+            by_id["missing-address"]["eligible"]
+        )
+        self.assertFalse(
+            by_id["ssh-disabled"]["eligible"]
+        )
+        self.assertFalse(
+            by_id["linux-invalid"]["eligible"]
+        )
+        self.assertNotIn("collector", by_id)
+
+    def test_health_classifier_uses_conservative_precedence(self):
+        cases = (
+            (
+                {
+                    "status": "ONLINE",
+                    "status_code": "OK",
+                    "healthy": True,
+                    "warning": False,
+                },
+                ("OK", "ok"),
+            ),
+            (
+                {
+                    "status": "DEGRADED",
+                    "status_code": "OK",
+                    "healthy": True,
+                    "warning": False,
+                },
+                ("WARNING", "warning"),
+            ),
+            (
+                {
+                    "status": "FAULTED",
+                    "status_code": "OK",
+                    "healthy": True,
+                    "warning": False,
+                },
+                ("CRITICAL", "bad"),
+            ),
+            (
+                {
+                    "status": "ONLINE",
+                    "status_code": "OK",
+                    "healthy": False,
+                    "warning": False,
+                },
+                ("WARNING", "warning"),
+            ),
+            (
+                {
+                    "status": "ONLINE",
+                    "status_code": "WARN",
+                    "healthy": True,
+                    "warning": False,
+                },
+                ("WARNING", "warning"),
+            ),
+            (
+                {
+                    "status": "ONLINE",
+                },
+                ("UNKNOWN", "info"),
+            ),
+            (
+                {
+                    "status": "MYSTERY",
+                    "healthy": True,
+                    "warning": False,
+                },
+                ("UNKNOWN", "info"),
+            ),
+        )
+
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                label, css, _ = (
+                    config_truenas_pool_health(payload)
+                )
+                self.assertEqual((label, css), expected)
+
+    def test_payload_parser_retains_numeric_capacity_and_optional_gaps(self):
+        host = normalize_config_truenas_pool_hosts(
+            [self.host()]
+        )[0]
+
+        rows, error = parse_config_truenas_pool_payload(
+            host,
+            json.dumps([
+                {
+                    "name": "tank",
+                    "path": "/mnt/tank",
+                    "status": "ONLINE",
+                    "status_code": "OK",
+                    "status_detail": None,
+                    "healthy": True,
+                    "warning": False,
+                    "size": 1000,
+                    "allocated": 425,
+                    "free": 575,
+                    "fragmentation": "3",
+                },
+                {
+                    "name": "archive",
+                    "path": "/mnt/archive",
+                    "status": "ONLINE",
+                    "status_code": "OK",
+                    "healthy": True,
+                    "warning": False,
+                },
+            ]),
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(len(rows), 2)
+
+        by_name = {
+            row["pool_name"]: row
+            for row in rows
+        }
+
+        self.assertEqual(
+            by_name["tank"]["size_bytes"],
+            1000,
+        )
+        self.assertEqual(
+            by_name["tank"]["allocated_bytes"],
+            425,
+        )
+        self.assertEqual(
+            by_name["tank"]["available_bytes"],
+            575,
+        )
+        self.assertEqual(
+            by_name["tank"]["used_percent"],
+            42.5,
+        )
+
+        self.assertEqual(
+            by_name["archive"]["label"],
+            "OK",
+        )
+        self.assertIsNone(
+            by_name["archive"]["size_bytes"]
+        )
+        self.assertIsNone(
+            by_name["archive"]["used_percent"]
+        )
+
+        self.assertEqual(
+            config_format_bytes(1073741824),
+            "1.0 GiB",
+        )
+        self.assertEqual(config_format_bytes(None), "-")
+
+    def test_collector_contacts_only_eligible_hosts(self):
+        normalized = normalize_config_truenas_pool_hosts(
+            [
+                self.host(
+                    id="healthy",
+                    display_name="Healthy",
+                ),
+                self.host(
+                    id="unreachable",
+                    display_name="Unreachable",
+                ),
+                self.host(
+                    id="authentication",
+                    display_name="Authentication",
+                ),
+                self.host(
+                    id="malformed",
+                    display_name="Malformed",
+                ),
+                self.host(
+                    id="empty",
+                    display_name="Empty",
+                ),
+                self.host(
+                    id="module-disabled",
+                    display_name="Module Disabled",
+                    modules={"pools": False},
+                ),
+            ]
+        )
+
+        calls = []
+
+        def fake_ssh(host, command, timeout=30):
+            calls.append(host["id"])
+            self.assertEqual(
+                command,
+                "midclt call pool.query",
+            )
+
+            if host["id"] == "healthy":
+                return (
+                    0,
+                    json.dumps([
+                        {
+                            "name": "tank",
+                            "path": "/mnt/tank",
+                            "status": "ONLINE",
+                            "status_code": "OK",
+                            "healthy": True,
+                            "warning": False,
+                            "size": 1000,
+                            "allocated": 100,
+                            "free": 900,
+                        }
+                    ]),
+                )
+
+            if host["id"] == "unreachable":
+                return (
+                    255,
+                    "ssh: connect to host: No route to host",
+                )
+
+            if host["id"] == "authentication":
+                return (
+                    255,
+                    "Permission denied (publickey)",
+                )
+
+            if host["id"] == "malformed":
+                return 0, "{}"
+
+            if host["id"] == "empty":
+                return 0, "[]"
+
+            raise AssertionError(host["id"])
+
+        original = FUNCTIONS["run_config_host_ssh"]
+        FUNCTIONS["run_config_host_ssh"] = fake_ssh
+
+        try:
+            rows, statuses, errors = (
+                collect_config_truenas_pools(normalized)
+            )
+        finally:
+            FUNCTIONS["run_config_host_ssh"] = original
+
+        self.assertEqual(
+            calls,
+            [
+                "healthy",
+                "unreachable",
+                "authentication",
+                "malformed",
+                "empty",
+            ],
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pool_name"], "tank")
+
+        self.assertEqual(
+            statuses["healthy"]["label"],
+            "OK",
+        )
+        self.assertEqual(
+            statuses["unreachable"]["label"],
+            "UNREACHABLE",
+        )
+        self.assertEqual(
+            statuses["authentication"]["label"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            statuses["malformed"]["label"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            statuses["empty"]["label"],
+            "INFO",
+        )
+        self.assertEqual(
+            statuses["module-disabled"]["label"],
+            "NOT CHECKED",
+        )
+        self.assertEqual(len(errors), 3)
+
+    def test_preview_is_generic_compact_and_html_safe(self):
+        hosts = normalize_config_truenas_pool_hosts(
+            [
+                self.host(
+                    id="nas",
+                    display_name="Storage <Primary>",
+                ),
+                self.host(
+                    id="disabled",
+                    display_name="Archive & Lab",
+                    modules={"pools": False},
+                ),
+            ]
+        )
+
+        rows = [
+            {
+                "host_id": "nas",
+                "host_key": "nas",
+                "host_name": "Storage <Primary>",
+                "pool_name": "tank & media",
+                "status": "ONLINE",
+                "size_bytes": 1073741824,
+                "allocated_bytes": 536870912,
+                "available_bytes": 536870912,
+                "used_percent": 50.0,
+                "label": "OK",
+                "css": "ok",
+            }
+        ]
+        statuses = {
+            "nas": {
+                "label": "OK",
+                "css": "ok",
+                "raw": "1 pools discovered",
+            },
+            "disabled": {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "pools module disabled",
+            },
+        }
+
+        preview = build_config_truenas_pool_preview(
+            hosts,
+            rows,
+            statuses,
+        )
+
+        self.assertIn(
+            "Configured TrueNAS Pools",
+            preview,
+        )
+        self.assertIn(
+            "2 hosts · 1 pool · 1 checked · 1 not checked",
+            preview,
+        )
+        self.assertIn(
+            "Storage &lt;Primary&gt;",
+            preview,
+        )
+        self.assertIn(
+            "Archive &amp; Lab",
+            preview,
+        )
+        self.assertIn(
+            "tank &amp; media",
+            preview,
+        )
+        self.assertIn("1.0 GiB", preview)
+        self.assertIn("50.0%", preview)
+        self.assertIn("NOT CHECKED", preview)
 
 
 class SystemsSummaryHostHealthTests(unittest.TestCase):
