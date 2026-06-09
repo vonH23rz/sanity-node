@@ -5776,7 +5776,216 @@ def classify_collector_error(value):
     return {"label": "OTHER", "css": "info"}
 
 
-def build_collector_errors_section(collection_errors):
+def public_overall_status_severity(status):
+    status = status or {}
+    css = str(status.get("css") or "").strip().lower()
+    label = str(status.get("label") or "").strip().upper()
+
+    if css == "bad":
+        return 3
+
+    if css in {"warning", "disabled"}:
+        return 2
+
+    if css == "ok":
+        return 0
+
+    if label in {
+        "CRITICAL",
+        "DOWN",
+        "MISSING",
+        "UNREACHABLE",
+        "FAILED",
+        "ERROR",
+        "ABORTED",
+    }:
+        return 3
+
+    if label in {
+        "WARNING",
+        "OLD",
+        "STALE",
+        "DISABLED",
+        "PAUSED",
+        "INACTIVE",
+        "DIFFERENT",
+        "INCOMPLETE",
+    }:
+        return 2
+
+    if label in {
+        "OK",
+        "UP",
+        "ONLINE",
+        "FINISHED",
+        "HEALTHY",
+    }:
+        return 0
+
+    return 1
+
+
+
+def build_public_overall_status(
+    domain_results,
+    collection_errors=None,
+):
+    entries = []
+
+    def normalize_error_text(value):
+        normalized = " ".join(
+            str(value or "").split()
+        ).lower()
+
+        if normalized in {
+            "",
+            "-",
+            "n/a",
+            "none",
+            "unknown",
+        }:
+            return ""
+
+        return normalized
+
+    for result in domain_results or []:
+        result = result or {}
+        status = result.get("status") or result
+        severity = public_overall_status_severity(status)
+
+        note = str(result.get("note") or "").strip()
+
+        if not note:
+            domain = str(
+                result.get("domain") or "Public"
+            ).strip()
+            name = str(
+                result.get("name") or "result"
+            ).strip()
+            label = str(
+                status.get("label") or "UNKNOWN"
+            ).strip()
+
+            note = f"{domain} · {name}: {label}"
+
+        entries.append(
+            {
+                "severity": severity,
+                "note": note,
+                "raw": normalize_error_text(
+                    status.get("raw")
+                ),
+            }
+        )
+
+    for name, error in collection_errors or []:
+        normalized_error = normalize_error_text(
+            error
+        )
+        classification = classify_collector_error(error)
+        collector_severity = (
+            3
+            if classification.get("css") == "bad"
+            else 2
+        )
+
+        if "image update" in str(name or "").lower():
+            collector_severity = 2
+
+        represented_entry = None
+
+        if normalized_error:
+            represented_entry = next(
+                (
+                    entry
+                    for entry in entries
+                    if entry["raw"]
+                    and (
+                        normalized_error == entry["raw"]
+                        or (
+                            min(
+                                len(normalized_error),
+                                len(entry["raw"]),
+                            ) >= 12
+                            and (
+                                normalized_error
+                                in entry["raw"]
+                                or entry["raw"]
+                                in normalized_error
+                            )
+                        )
+                    )
+                ),
+                None,
+            )
+
+        if represented_entry is not None:
+            represented_entry["severity"] = max(
+                represented_entry["severity"],
+                collector_severity,
+            )
+            continue
+
+        entries.append(
+            {
+                "severity": collector_severity,
+                "note": (
+                    "Collector · "
+                    f"{name}: "
+                    f"{classification.get('label', 'UNKNOWN')}"
+                ),
+                "raw": normalized_error,
+            }
+        )
+
+    issues = {
+        3: [],
+        2: [],
+        1: [],
+    }
+
+    for entry in entries:
+        severity = entry["severity"]
+
+        if severity:
+            issues[severity].append(entry["note"])
+
+    if issues[3]:
+        return {
+            "label": "NOK",
+            "css": "bad",
+            "note": issues[3][0],
+            "issues": issues,
+        }
+
+    if issues[2]:
+        return {
+            "label": "WARNING",
+            "css": "warning",
+            "note": issues[2][0],
+            "issues": issues,
+        }
+
+    if issues[1]:
+        return {
+            "label": "INFO",
+            "css": "info",
+            "note": issues[1][0],
+            "issues": issues,
+        }
+
+    return {
+        "label": "OK",
+        "css": "ok",
+        "note": "Data fresh",
+        "issues": issues,
+    }
+
+
+def build_collector_errors_section(
+    collection_errors,
+    contributes_to_overall=False,
+):
     if not collection_errors:
         return ""
 
@@ -5793,10 +6002,24 @@ def build_collector_errors_section(collection_errors):
 </tr>
 """
 
+    if contributes_to_overall:
+        explanation = (
+            "Error types are classified from collector messages. "
+            "In public mode, uncovered collector errors contribute "
+            "to Overall Status; failures already represented by a "
+            "domain result are deduplicated."
+        )
+    else:
+        explanation = (
+            "Error types are classified from collector messages. "
+            "All rows remain collector failures, and this presentation "
+            "does not change Overall Status handling."
+        )
+
     return f"""
 <section>
   <h2>Collector Errors</h2>
-  <p class="muted-small">Error types are classified from collector messages. All rows remain collector failures, and this presentation does not change Overall Status handling.</p>
+  <p class="muted-small">{h(explanation)}</p>
   <table>
     <tr>
       <th>Check</th>
@@ -6115,6 +6338,291 @@ def config_system_host_status(
         return system_info_status
 
     return web_status
+
+
+def build_public_overall_domain_results(
+    hosts,
+    web_statuses,
+    services,
+    service_statuses,
+    system_info_statuses=None,
+    local_storage_checks=None,
+    local_storage_statuses=None,
+    pool_rows=None,
+    pool_host_statuses=None,
+    disk_health_rows=None,
+    disk_health_host_statuses=None,
+    backup_checks=None,
+    backup_statuses=None,
+    snapshot_rows=None,
+    replication_rows=None,
+    protection_relationships=None,
+    protection_statuses=None,
+):
+    results = []
+    services = services or []
+    service_statuses = service_statuses or {}
+    system_info_statuses = system_info_statuses or {}
+    local_storage_checks = local_storage_checks or []
+    local_storage_statuses = local_storage_statuses or {}
+    pool_rows = pool_rows or []
+    pool_host_statuses = pool_host_statuses or {}
+    disk_health_rows = disk_health_rows or []
+    disk_health_host_statuses = (
+        disk_health_host_statuses or {}
+    )
+    backup_checks = backup_checks or []
+    backup_statuses = backup_statuses or {}
+    snapshot_rows = snapshot_rows or []
+    replication_rows = replication_rows or []
+    protection_relationships = (
+        protection_relationships or []
+    )
+    protection_statuses = protection_statuses or {}
+
+    def add_result(domain, name, status):
+        results.append(
+            {
+                "domain": domain,
+                "name": name,
+                "status": status or {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "-",
+                },
+            }
+        )
+
+    for host in sorted(
+        enabled_items(hosts),
+        key=configured_host_sort_key,
+    ):
+        host_key = configured_host_key(host)
+        web_status = web_statuses.get(
+            host_key,
+            {
+                "label": "NO URL",
+                "css": "info",
+                "raw": "-",
+            },
+        )
+        status = config_system_host_status(
+            host,
+            services,
+            service_statuses,
+            web_status,
+            system_info_statuses.get(host_key),
+        )
+
+        add_result(
+            "Systems",
+            configured_host_display_name(host),
+            status,
+        )
+
+    for check in local_storage_checks:
+        check_id = check["id"]
+        name = (
+            check.get("label")
+            or check.get("mount")
+            or check_id
+        )
+
+        add_result(
+            "Storage",
+            name,
+            local_storage_statuses.get(
+                check_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    pool_row_host_keys = {
+        row.get("host_key")
+        for row in pool_rows
+        if row.get("host_key")
+    }
+
+    for row in pool_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        pool_name = row.get("pool_name") or "Unknown pool"
+
+        add_result(
+            "Storage",
+            f"{host_name} · {pool_name}",
+            row,
+        )
+
+    for host_key, status in sorted(
+        pool_host_statuses.items(),
+        key=lambda item: str(
+            item[1].get("display_name")
+            or item[0]
+        ).lower(),
+    ):
+        if (
+            host_key in pool_row_host_keys
+            or status.get("label") == "NOT CHECKED"
+        ):
+            continue
+
+        add_result(
+            "Storage",
+            (
+                status.get("display_name")
+                or status.get("host_id")
+                or "Configured TrueNAS"
+            ),
+            status,
+        )
+
+    disk_row_host_keys = {
+        row.get("host_key")
+        for row in disk_health_rows
+        if row.get("host_key")
+    }
+
+    for row in disk_health_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        pool_name = row.get("pool_name") or "Unknown pool"
+
+        add_result(
+            "Storage",
+            f"{host_name} · {pool_name} disk health",
+            row,
+        )
+
+    for host_key, status in sorted(
+        disk_health_host_statuses.items(),
+        key=lambda item: str(
+            item[1].get("display_name")
+            or item[0]
+        ).lower(),
+    ):
+        if (
+            host_key in disk_row_host_keys
+            or status.get("label") == "NOT CHECKED"
+        ):
+            continue
+
+        add_result(
+            "Storage",
+            (
+                status.get("display_name")
+                or status.get("host_id")
+                or "Configured TrueNAS"
+            )
+            + " disk health",
+            status,
+        )
+
+    for check in backup_checks:
+        check_id = check["id"]
+        name = (
+            check.get("name")
+            or check.get("label")
+            or check_id
+        )
+
+        add_result(
+            "Protection",
+            f"Backup · {name}",
+            backup_statuses.get(
+                check_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "warning",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    for row in snapshot_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        dataset = row.get("dataset") or "-"
+        name = (
+            f"Snapshot · {host_name}"
+            if dataset == "-"
+            else f"Snapshot · {host_name} · {dataset}"
+        )
+
+        add_result("Protection", name, row)
+
+    for row in replication_rows:
+        host_name = (
+            row.get("host_name")
+            or row.get("host_id")
+            or "Configured TrueNAS"
+        )
+        task_name = (
+            row.get("name")
+            or row.get("task_id")
+            or "-"
+        )
+        name = (
+            f"Replication · {host_name}"
+            if task_name == "-"
+            else (
+                f"Replication · {host_name} · "
+                f"{task_name}"
+            )
+        )
+
+        add_result("Protection", name, row)
+
+    for relationship in protection_relationships:
+        relationship_id = relationship["id"]
+        name = (
+            relationship.get("name")
+            or relationship_id
+        )
+
+        add_result(
+            "Protection",
+            f"Relationship · {name}",
+            protection_statuses.get(
+                relationship_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "warning",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    for service in services:
+        service_id = service["id"]
+
+        add_result(
+            "Services",
+            service.get("display") or service_id,
+            service_statuses.get(
+                service_id,
+                {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "-",
+                },
+            ),
+        )
+
+    return results
 
 
 def build_public_systems_summary_card(
@@ -6720,11 +7228,15 @@ def promote_public_runtime_detail_html(value):
         ),
         (
             "Read from config.yaml. Web UI checks are preview-only and do not affect Overall Status yet.",
-            "Configured hosts and Web UI checks. Web UI checks do not affect Overall Status.",
+            "Configured hosts and Web UI checks contribute to public Overall Status.",
         ),
         (
             "These preview results do not affect Overall Status yet.",
-            "These results do not affect Overall Status.",
+            "These results contribute to public Overall Status.",
+        ),
+        (
+            "These results affect the Storage card but do not affect Overall Status yet.",
+            "These results affect the Storage card and contribute to public Overall Status.",
         ),
         (
             "Protection relationships are config-driven preview data. "
@@ -8436,7 +8948,12 @@ else:
     overall_css = "ok"
     overall_note = "Data fresh"
 
-errors_section = build_collector_errors_section(collection_errors)
+errors_section = build_collector_errors_section(
+    collection_errors,
+    contributes_to_overall=(
+        DASHBOARD_RUNTIME_MODE == "public"
+    ),
+)
 
 public_summary_services = normalize_config_services_for_summary(CONFIG_ENABLED_SERVICES)
 public_summary_statuses = build_config_summary_statuses(
@@ -8460,6 +8977,58 @@ if config_service_update_overlay_count:
     )
 
 if DASHBOARD_RUNTIME_MODE == "public":
+    public_overall_domain_results = (
+        build_public_overall_domain_results(
+            CONFIG_HOSTS,
+            configured_host_web_statuses,
+            public_summary_services,
+            public_summary_statuses,
+            system_info_statuses=(
+                config_system_info_statuses
+            ),
+            local_storage_checks=(
+                config_local_storage_checks
+            ),
+            local_storage_statuses=(
+                config_local_storage_statuses
+            ),
+            pool_rows=config_truenas_pool_rows,
+            pool_host_statuses=(
+                config_truenas_pool_statuses
+            ),
+            disk_health_rows=(
+                config_truenas_disk_health_rows
+            ),
+            disk_health_host_statuses=(
+                config_truenas_disk_health_statuses
+            ),
+            backup_checks=config_backup_checks,
+            backup_statuses=config_backup_statuses,
+            snapshot_rows=config_truenas_snapshot_rows,
+            replication_rows=(
+                config_truenas_replication_rows
+            ),
+            protection_relationships=(
+                config_protection_relationships
+            ),
+            protection_statuses=(
+                config_protection_statuses
+            ),
+        )
+    )
+    public_overall_status = build_public_overall_status(
+        public_overall_domain_results,
+        collection_errors,
+    )
+    overall_label = public_overall_status["label"]
+    overall_css = public_overall_status["css"]
+    overall_note = public_overall_status["note"]
+
+    print(
+        "Public Overall Status: "
+        f"{overall_label} · {overall_note}"
+    )
+
     public_summary_preview_html = ""
 else:
     public_summary_preview_html = build_public_host_summary_preview(

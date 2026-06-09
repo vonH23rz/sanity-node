@@ -78,6 +78,8 @@ FUNCTIONS_UNDER_TEST = {
     "configured_host_sort_key",
     "config_error_indicates_host_unreachable",
     "classify_collector_error",
+    "public_overall_status_severity",
+    "build_public_overall_status",
     "build_collector_errors_section",
     "config_host_service_unreachable",
     "build_service_summary",
@@ -93,6 +95,7 @@ FUNCTIONS_UNDER_TEST = {
     "build_public_summary_detail",
     "public_card_css",
     "config_system_host_status",
+    "build_public_overall_domain_results",
     "build_public_systems_summary_card",
     "build_public_storage_summary_card",
     "build_public_protection_summary_card",
@@ -310,6 +313,12 @@ config_error_indicates_host_unreachable = FUNCTIONS[
 classify_collector_error = FUNCTIONS[
     "classify_collector_error"
 ]
+public_overall_status_severity = FUNCTIONS[
+    "public_overall_status_severity"
+]
+build_public_overall_status = FUNCTIONS[
+    "build_public_overall_status"
+]
 build_collector_errors_section = FUNCTIONS[
     "build_collector_errors_section"
 ]
@@ -327,6 +336,9 @@ build_public_host_summary_preview = FUNCTIONS[
 ]
 config_system_host_status = FUNCTIONS[
     "config_system_host_status"
+]
+build_public_overall_domain_results = FUNCTIONS[
+    "build_public_overall_domain_results"
 ]
 build_public_systems_summary_card = FUNCTIONS[
     "build_public_systems_summary_card"
@@ -1880,11 +1892,478 @@ class CollectorErrorClassificationTests(unittest.TestCase):
         self.assertEqual(result["css"], "bad")
 
 
+
+class PublicOverallStatusTests(unittest.TestCase):
+    def test_all_healthy_results_are_ok(self):
+        result = build_public_overall_status(
+            [
+                {
+                    "domain": "Systems",
+                    "name": "Collector",
+                    "status": {
+                        "label": "OK",
+                        "css": "ok",
+                        "raw": "healthy",
+                    },
+                },
+                {
+                    "domain": "Services",
+                    "name": "Web",
+                    "status": {
+                        "label": "UP",
+                        "css": "ok",
+                        "raw": "running",
+                    },
+                },
+            ],
+            [],
+        )
+
+        self.assertEqual(result["label"], "OK")
+        self.assertEqual(result["css"], "ok")
+        self.assertEqual(result["note"], "Data fresh")
+        self.assertEqual(result["issues"][3], [])
+        self.assertEqual(result["issues"][2], [])
+        self.assertEqual(result["issues"][1], [])
+
+    def test_domain_precedence_and_order_are_deterministic(self):
+        result = build_public_overall_status(
+            [
+                {
+                    "domain": "Systems",
+                    "name": "Primary NAS",
+                    "status": {
+                        "label": "UNKNOWN",
+                        "css": "info",
+                    },
+                },
+                {
+                    "domain": "Storage",
+                    "name": "Archive",
+                    "status": {
+                        "label": "WARNING",
+                        "css": "warning",
+                    },
+                },
+                {
+                    "domain": "Protection",
+                    "name": "Backup",
+                    "status": {
+                        "label": "MISSING",
+                        "css": "bad",
+                    },
+                },
+                {
+                    "domain": "Services",
+                    "name": "Database",
+                    "status": {
+                        "label": "DOWN",
+                        "css": "bad",
+                    },
+                },
+            ],
+            [],
+        )
+
+        self.assertEqual(result["label"], "NOK")
+        self.assertEqual(result["css"], "bad")
+        self.assertEqual(
+            result["note"],
+            "Protection · Backup: MISSING",
+        )
+        self.assertEqual(
+            result["issues"][3],
+            [
+                "Protection · Backup: MISSING",
+                "Services · Database: DOWN",
+            ],
+        )
+
+    def test_disabled_and_uncertain_results_are_noncritical(self):
+        warning = build_public_overall_status(
+            [
+                {
+                    "domain": "Protection",
+                    "name": "Snapshot task",
+                    "status": {
+                        "label": "DISABLED",
+                        "css": "disabled",
+                    },
+                }
+            ],
+            [],
+        )
+        informational = build_public_overall_status(
+            [
+                {
+                    "domain": "Protection",
+                    "name": "Replication",
+                    "status": {
+                        "label": "RUNNING",
+                        "css": "info",
+                    },
+                },
+                {
+                    "domain": "Services",
+                    "name": "Web",
+                    "status": {
+                        "label": "UPDATE",
+                        "css": "info",
+                    },
+                },
+                {
+                    "domain": "Storage",
+                    "name": "Remote mount",
+                    "status": {
+                        "label": "NOT CHECKED",
+                        "css": "info",
+                    },
+                },
+            ],
+            [],
+        )
+
+        self.assertEqual(warning["label"], "WARNING")
+        self.assertEqual(informational["label"], "INFO")
+        self.assertEqual(
+            informational["note"],
+            "Protection · Replication: RUNNING",
+        )
+
+    def test_collector_failures_are_classified_and_deduplicated(self):
+        represented = build_public_overall_status(
+            [
+                {
+                    "domain": "Systems",
+                    "name": "Primary NAS",
+                    "status": {
+                        "label": "UNREACHABLE",
+                        "css": "bad",
+                        "raw": "Connection timed out",
+                    },
+                }
+            ],
+            [
+                (
+                    "Configured system information query",
+                    "Connection timed out",
+                )
+            ],
+        )
+        uncovered = build_public_overall_status(
+            [],
+            [
+                (
+                    "Configured TrueNAS pool query",
+                    "No route to host",
+                ),
+                (
+                    "Configured TrueNAS app query",
+                    "Permission denied (publickey)",
+                ),
+            ],
+        )
+
+        self.assertEqual(represented["label"], "NOK")
+        self.assertEqual(
+            represented["issues"][3],
+            ["Systems · Primary NAS: UNREACHABLE"],
+        )
+        self.assertEqual(uncovered["label"], "NOK")
+        self.assertEqual(
+            uncovered["note"],
+            "Collector · Configured TrueNAS pool query: NETWORK",
+        )
+        self.assertEqual(
+            uncovered["issues"][2],
+            [
+                "Collector · "
+                "Configured TrueNAS app query: AUTH"
+            ],
+        )
+
+    def test_matching_collector_error_elevates_without_duplication(self):
+        result = build_public_overall_status(
+            [
+                {
+                    "domain": "Systems",
+                    "name": "Primary NAS",
+                    "status": {
+                        "label": "UNKNOWN",
+                        "css": "info",
+                        "raw": "Connection timed out",
+                    },
+                }
+            ],
+            [
+                (
+                    "Configured system information query",
+                    "Connection timed out",
+                )
+            ],
+        )
+
+        self.assertEqual(result["label"], "NOK")
+        self.assertEqual(
+            result["issues"][3],
+            ["Systems · Primary NAS: UNKNOWN"],
+        )
+        self.assertEqual(result["issues"][1], [])
+
+    def test_placeholder_raw_does_not_consume_collector_error(self):
+        result = build_public_overall_status(
+            [
+                {
+                    "domain": "Services",
+                    "name": "API",
+                    "status": {
+                        "label": "UNKNOWN",
+                        "css": "info",
+                        "raw": "-",
+                    },
+                }
+            ],
+            [
+                (
+                    "Configured TrueNAS app query",
+                    "command returned non-zero exit status",
+                )
+            ],
+        )
+
+        self.assertEqual(result["label"], "WARNING")
+        self.assertEqual(
+            result["note"],
+            "Collector · "
+            "Configured TrueNAS app query: COMMAND",
+        )
+        self.assertEqual(
+            result["issues"][2],
+            [
+                "Collector · "
+                "Configured TrueNAS app query: COMMAND"
+            ],
+        )
+        self.assertEqual(
+            result["issues"][1],
+            ["Services · API: UNKNOWN"],
+        )
+
+    def test_image_update_collector_failures_are_warning_grade(self):
+            result = build_public_overall_status(
+                [],
+                [
+                    (
+                        "Configured image update query",
+                        "Connection timed out",
+                    )
+                ],
+            )
+
+            self.assertEqual(result["label"], "WARNING")
+            self.assertEqual(result["css"], "warning")
+            self.assertEqual(
+                result["note"],
+                "Collector · Configured image update query: TIMEOUT",
+            )
+
+
+
+class PublicOverallDomainResultsTests(unittest.TestCase):
+    def test_results_follow_global_domain_order(self):
+        hosts = [
+            {
+                "id": "nas",
+                "enabled": True,
+                "display_name": "Primary NAS",
+                "type": "truenas",
+            }
+        ]
+        services = [
+            {
+                "id": "web",
+                "host": "nas",
+                "display": "Web",
+                "type": "app",
+            }
+        ]
+
+        results = build_public_overall_domain_results(
+            hosts,
+            {
+                "nas": {
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "HTTP 200",
+                }
+            },
+            services,
+            {
+                "web": {
+                    "label": "DOWN",
+                    "css": "bad",
+                    "raw": "HTTP 503",
+                }
+            },
+            system_info_statuses={
+                "nas": {
+                    "label": "OK",
+                    "css": "ok",
+                    "raw": "system information collected",
+                }
+            },
+            local_storage_checks=[
+                {
+                    "id": "archive",
+                    "label": "Archive",
+                }
+            ],
+            local_storage_statuses={
+                "archive": {
+                    "label": "WARNING",
+                    "css": "warning",
+                    "raw": "82%",
+                }
+            },
+            backup_checks=[
+                {
+                    "id": "backup",
+                    "name": "Utility Backup",
+                }
+            ],
+            backup_statuses={
+                "backup": {
+                    "label": "MISSING",
+                    "css": "bad",
+                    "raw": "marker missing",
+                }
+            },
+        )
+
+        self.assertEqual(
+            [
+                (result["domain"], result["name"])
+                for result in results
+            ],
+            [
+                ("Systems", "Primary NAS"),
+                ("Storage", "Archive"),
+                ("Protection", "Backup · Utility Backup"),
+                ("Services", "Web"),
+            ],
+        )
+
+        overall = build_public_overall_status(results, [])
+
+        self.assertEqual(overall["label"], "NOK")
+        self.assertEqual(
+            overall["note"],
+            "Protection · Backup · Utility Backup: MISSING",
+        )
+
+    def test_pool_and_disk_host_statuses_are_not_double_counted(self):
+        results = build_public_overall_domain_results(
+            [],
+            {},
+            [],
+            {},
+            pool_rows=[
+                {
+                    "host_key": "nas",
+                    "host_name": "Primary NAS",
+                    "pool_name": "tank",
+                    "label": "OK",
+                    "css": "ok",
+                }
+            ],
+            pool_host_statuses={
+                "nas": {
+                    "display_name": "Primary NAS",
+                    "label": "WARNING",
+                    "css": "warning",
+                },
+                "offline": {
+                    "display_name": "Offline NAS",
+                    "label": "UNREACHABLE",
+                    "css": "bad",
+                },
+                "disabled": {
+                    "display_name": "Disabled NAS",
+                    "label": "NOT CHECKED",
+                    "css": "info",
+                },
+            },
+            disk_health_rows=[
+                {
+                    "host_key": "nas",
+                    "host_name": "Primary NAS",
+                    "pool_name": "tank",
+                    "label": "OK",
+                    "css": "ok",
+                }
+            ],
+            disk_health_host_statuses={
+                "nas": {
+                    "display_name": "Primary NAS",
+                    "label": "WARNING",
+                    "css": "warning",
+                },
+                "offline": {
+                    "display_name": "Offline NAS",
+                    "label": "UNREACHABLE",
+                    "css": "bad",
+                },
+                "disabled": {
+                    "display_name": "Disabled NAS",
+                    "label": "NOT CHECKED",
+                    "css": "info",
+                },
+            },
+        )
+
+        names = [result["name"] for result in results]
+
+        self.assertEqual(
+            names,
+            [
+                "Primary NAS · tank",
+                "Offline NAS",
+                "Primary NAS · tank disk health",
+                "Offline NAS disk health",
+            ],
+        )
+        self.assertNotIn("Disabled NAS", names)
+
+
 class CollectorErrorsRenderingTests(unittest.TestCase):
     def test_empty_error_list_renders_no_section(self):
         self.assertEqual(
             build_collector_errors_section([]),
             "",
+        )
+
+    def test_public_error_section_describes_status_contribution(self):
+        section = build_collector_errors_section(
+            [
+                (
+                    "Configured system information query",
+                    "Connection timed out",
+                )
+            ],
+            contributes_to_overall=True,
+        )
+
+        self.assertIn(
+            "uncovered collector errors contribute to Overall Status",
+            section,
+        )
+        self.assertIn(
+            "represented by a domain result are deduplicated",
+            section,
+        )
+        self.assertNotIn(
+            "does not change Overall Status handling",
+            section,
         )
 
     def test_error_section_renders_type_badges_and_escaped_content(self):
@@ -5263,8 +5742,9 @@ class PublicRuntimeDetailPromotionTests(unittest.TestCase):
 
         for promoted_text in (
             "Runtime Detail",
-            "Configured hosts and Web UI checks.",
-            "These results do not affect Overall Status.",
+            "Configured hosts and Web UI checks contribute "
+            "to public Overall Status.",
+            "These results contribute to public Overall Status.",
             "include available live status overlays",
             "not actively checked yet",
             "replication intent ·",
