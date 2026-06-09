@@ -154,6 +154,8 @@ One quick answer:
 
 ## Documentation
 
+The Phase 3C migration boundary is documented in [`docs/phase3c-migration-parity-audit.md`](docs/phase3c-migration-parity-audit.md). It records the reference-to-public capability matrix, severity gaps, migration risks, and validated implementation sequence.
+
 The project/concept page explains what Sanity Node is, why it exists, what it monitors, and how the dashboard concept evolved:
 
 [Project Sanity Node](https://wiki.homelabvonh23rz.me/en/Project_Sanity_Node)
@@ -711,44 +713,74 @@ Sanity Node should start small and grow with the environment.
 ---
 ## Phase 3 boundary
 
-Phase 2F is closed.
+Phase 2F is closed and remains released as `v0.2.0`.
 
-Completed Phase 3A reliability work now includes:
+Completed Phase 3A reliability work includes:
 
-- fail-closed configuration validation and startup preflight
+- fail-closed startup preflight
 - conditional SSH credential checks
-- stale-output protection and required initial dashboard generation
-- generated-dashboard and HTTP container health checks
-- a deterministic, non-destructive first-run workspace bootstrap
-- a credential-free collector-only starter configuration
-- a health-gated Docker Compose first-run flow
+- stale-output protection
+- generated-dashboard and HTTP health checks
+- safe first-run workspace bootstrap
+- credential-free starter configuration
+- health-gated Docker Compose startup
 
-Completed Phase 3B.1 runtime-isolation work now includes:
+Completed Phase 3B runtime and presentation work includes:
 
 - explicit `public` and `reference` runtime modes
-- backward-compatible `reference` behavior when the setting is absent
-- public-mode suppression of hardcoded personal collectors and output
-- public Overall Status and collector errors sourced only from configured checks
+- backward-compatible reference behavior
+- public-mode isolation from hardcoded personal collectors
 - deterministic whole-generator isolation tests
-- preservation of the original reference dashboard path
+- preservation of the original reference dashboard
+- promotion of the four-card public layout
+- public Dashboard Summary, System Overview, and Details sections
 
-The following work remains within the Phase 3 boundary:
+Phase 3C.1 completed the read-only migration parity audit.
 
-- refine the four global summary cards for the public layout
-- add optional remote Linux check families beyond Docker, storage, and backup status
-- add backup-status providers beyond marker files
-- add protection relationship types beyond replication
-- decide when the original hardcoded reference path has reached migration parity
+See:
 
-New Phase 3 features should continue using the established safeguards:
+    docs/phase3c-migration-parity-audit.md
 
-- narrowly scoped feature branches
+The audit confirmed that service inventory, HTTP checks, Docker checks,
+TrueNAS application checks, snapshots, replications, backups,
+protection, and image updates are already substantially
+configuration-driven.
+
+The principal remaining parity gaps are:
+
+- config-driven host system information
+- TrueNAS pool inventory, capacity, and ZFS health
+- disk temperature and SMART health
+- unified public Overall Status behavior
+- deterministic collector-error severity
+- production migration and cutover rehearsal
+
+The validated remaining Phase 3C sequence is:
+
+    Phase 3C.2  Config-driven host system information parity
+    Phase 3C.3  Config-driven TrueNAS pool capacity and health parity
+    Phase 3C.4  Config-driven TrueNAS temperature and SMART parity
+    Phase 3C.5  Data-protection severity parity
+    Phase 3C.6  Unified Overall Status and collector-error parity
+    Phase 3C.7  Public schema and presentation consolidation
+    Phase 3C.8  Production configuration migration rehearsal
+    Phase 3C.9  Public-mode production cutover rehearsal
+    Phase 3C.10 Reference retirement decision
+
+Reference mode remains supported until parity is proven and an explicit
+retirement decision is made.
+
+New Phase 3 work must continue using:
+
+- narrow feature branches
 - deterministic tests
 - full regression validation
 - configuration validation
 - preview output only under `/tmp`
-- production dashboard hash and mtime protection
-- preserved remote feature references
+- isolated Docker fixtures
+- production dashboard protection
+- preserved remote feature branches
+- no SSH authorization changes solely for testing
 
 ---
 
