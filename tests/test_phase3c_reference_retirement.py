@@ -416,8 +416,8 @@ class PublicProductionUnitContractTests(unittest.TestCase):
         required = (
             "User=sanity-node",
             "Group=sanity-node",
-            "After=network-online.target sanity-node-generate.service",
-            "Requires=sanity-node-generate.service",
+            "After=network-online.target",
+            "Wants=network-online.target",
             "ConditionPathExists=/opt/sanity-node/html/index.html",
             "WorkingDirectory=/opt/sanity-node/html",
             "ExecStartPre=/usr/bin/test -s /opt/sanity-node/html/index.html",
@@ -436,6 +436,7 @@ class PublicProductionUnitContractTests(unittest.TestCase):
 
         self.assertNotIn("/opt/homelab-dashboard/html", text)
         self.assertNotIn("/opt/sanity-node-public-rehearsal/html", text)
+        self.assertNotIn("sanity-node-generate.service", text)
         self.assertNotIn("User=controls", text)
 
 

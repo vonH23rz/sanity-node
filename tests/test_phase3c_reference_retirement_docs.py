@@ -54,6 +54,7 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
             "sanity-node-web.service",
             "scripts/run-public-production.sh",
             "TCP port 8088",
+            "starts independently from the generator",
         )
 
         for value in required:

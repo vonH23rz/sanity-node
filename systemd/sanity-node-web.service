@@ -1,9 +1,8 @@
 [Unit]
 Description=Serve the Sanity Node public production dashboard
 Documentation=https://github.com/vonH23rz/sanity-node
-After=network-online.target sanity-node-generate.service
+After=network-online.target
 Wants=network-online.target
-Requires=sanity-node-generate.service
 ConditionPathExists=/opt/sanity-node/html/index.html
 
 [Service]

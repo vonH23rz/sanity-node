@@ -136,7 +136,8 @@ production.
 
 The web service:
 
-- requires a successful generation service start;
+- starts independently from the generator so the last successful dashboard
+  remains available while generation runs;
 - requires a nonempty production dashboard;
 - serves only `/opt/sanity-node/html`;
 - listens on TCP port 8088;
