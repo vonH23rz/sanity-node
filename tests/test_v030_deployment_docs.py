@@ -91,8 +91,8 @@ class V030DeploymentDocumentationTests(unittest.TestCase):
             "requires `dashboard.runtime_mode: public`",
             "acquires a non-blocking lock",
             "renders to a process-specific temporary file",
-            "requires `Dashboard Summary`",
-            "requires `Runtime Detail`",
+            "requires `Utility Node Services`",
+            "requires `public-systems-section`",
             "rejects obsolete `Config Preview` wording",
             "atomically replaces the previous successful output",
             "A failed generation does not replace the last successful "

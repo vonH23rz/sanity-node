@@ -70,7 +70,7 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
             "non-blocking execution lock",
             "runs startup preflight",
             "process-specific temporary file",
-            "Dashboard Summary and Runtime Detail markers",
+            "accepted public GUI markers",
             "rejects obsolete Config Preview wording",
             "atomically replaces the last successful production output",
             "A failed run does not replace the last successful",

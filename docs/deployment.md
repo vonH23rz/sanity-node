@@ -686,8 +686,8 @@ Every production generation:
 6. runs startup preflight;
 7. renders to a process-specific temporary file;
 8. requires nonempty output;
-9. requires `Dashboard Summary`;
-10. requires `Runtime Detail`;
+9. requires `Utility Node Services`;
+10. requires `public-systems-section`;
 11. rejects obsolete `Config Preview` wording;
 12. applies output mode `0664`;
 13. atomically replaces the previous successful output;
