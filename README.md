@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 added configuration-driven host system information, Phase 3C.3 added configuration-driven TrueNAS pool capacity and health, Phase 3C.4 added configuration-driven TrueNAS temperature and SMART health, Phase 3C.5 normalized data-protection severity, and Phase 3C.6 derives public Overall Status from Systems, Storage, Protection, Services, and classified collector errors. Phase 3C.7 now renders public Runtime Detail directly from each builder and uses one shared public severity contract while preserving the reference runtime.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed a full production-configuration rehearsal: host-native public execution reached monitoring parity, while the standard container exposed explicit deployment-boundary requirements for SSH trust, collector Docker access, host filesystems, backup and systemd state, and collector-local endpoints. Phase 3C.9 is the next step.
 
 ---
 
@@ -957,12 +957,25 @@ protection, and image updates are already substantially
 configuration-driven.
 
 Phase 3C.2 through Phase 3C.7 closed the collector, severity,
-schema, and presentation gaps identified by the audit. The remaining
-work is:
+schema, and presentation gaps.
 
-- production configuration migration rehearsal
-- public-mode production cutover rehearsal
-- reference retirement decision
+Phase 3C.8 completed the production configuration migration rehearsal.
+A complete isolated production inventory validated and rendered
+successfully through the host-native public runtime. The standard
+container also started and served successfully, but confirmed that
+production parity requires explicit deployment integration for SSH host
+trust, collector-local Docker access, host filesystems, backup and
+systemd state, and collector-local endpoints.
+
+The detailed Phase 3C.8 evidence and blocker classification are recorded
+in:
+
+    docs/phase3c-production-configuration-rehearsal.md
+
+The remaining Phase 3C decisions are:
+
+- public-mode production cutover rehearsal;
+- reference retirement decision.
 
 The validated Phase 3C sequence is:
 
@@ -979,6 +992,8 @@ The validated Phase 3C sequence is:
     Phase 3C.7  Public schema and presentation consolidation
                  COMPLETE
     Phase 3C.8  Production configuration migration rehearsal
+                 Complete
+
     Phase 3C.9  Public-mode production cutover rehearsal
     Phase 3C.10 Reference retirement decision
 
