@@ -96,7 +96,7 @@ deprecation, or removal.
 
 | Capability | Public state | Parity | Required work |
 |---|---|---:|---|
-| Host inventory | Configuration-driven | Partial | Move production inventory entirely into configuration |
+| Host inventory | Configuration-driven | Supported | Complete production inventory rehearsed in isolated configuration during Phase 3C.8 |
 | Host Web UI reachability | Implemented | Supported | Integrated into the Systems domain in Phase 3C.6 |
 | Hostname, OS, kernel, uptime, CPU, memory, load | Implemented | Supported | Completed in Phase 3C.2 |
 | Collector-local system information | Implemented | Supported | Local telemetry requires no SSH |
@@ -427,6 +427,44 @@ passed. The production dashboard hash and modification time remained
 unchanged, and the production generation timer remained active and
 enabled.
 
+
+## Phase 3C.8 completion — production configuration migration rehearsal
+
+Phase 3C.8 translated the complete current production monitoring
+inventory into an isolated configuration without adding personal
+deployment data to runtime code or tracked repository configuration.
+
+The rehearsal configuration represented three systems, twenty-three
+services, two collector-local storage checks, one backup check, one
+off-host protection relationship covering six datasets, three
+image-update sources, and all four public summary cards. Configuration
+validation completed with zero errors and zero warnings.
+
+Host-native public execution passed startup preflight and reached full
+monitoring parity. It discovered seven data pools, nine pool-level
+disk-health results, twelve snapshot tasks, eight replication tasks,
+all configured services, and all configured collector-local checks.
+Reference collectors were skipped and production remained unchanged.
+
+The standard container deployment also validated, started, served, and
+passed its health check. It did not reach production parity because the
+container boundary lacked verified SSH host trust, collector Docker
+access, host filesystem identity, backup marker and host-systemd state,
+and access to collector-local endpoints.
+
+Ordinary Docker bridge networking reached the remote systems and remote
+HTTP services successfully. The remaining network failure was limited
+to reaching services back on the collector host, confirming a
+collector self-reachability boundary rather than a general LAN routing
+problem.
+
+The complete evidence and Phase 3C.9 boundary are documented in
+`docs/phase3c-production-configuration-rehearsal.md`.
+
+Phase 3C.8 therefore closes production-configuration representation and
+identifies deployment integration as the remaining cutover concern.
+No runtime change was required.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -451,6 +489,7 @@ enabled.
                  Complete
 
     Phase 3C.8  Production configuration migration rehearsal
+                 Complete
 
     Phase 3C.9  Public-mode production cutover rehearsal
 
@@ -499,11 +538,17 @@ Phase 3C.1 is complete when:
 The public runtime already contains substantial configuration-driven
 coverage. Service inventory is not the principal migration blocker.
 
-The generic collector, severity, schema, and presentation gaps are
-closed through Phase 3C.7. The remaining path to production parity is:
+The generic collector, severity, schema, presentation, and production
+configuration representation gaps are closed through Phase 3C.8.
 
-1. rehearse the complete production configuration in isolation;
-2. rehearse the public-mode production cutover;
-3. make a separate, explicit reference-retirement decision.
+Host-native public execution reached complete monitoring parity. The
+standard container identified explicit deployment integration
+requirements rather than missing runtime capability.
+
+The remaining Phase 3C path is:
+
+1. rehearse the public-mode production cutover using the validated
+   host-native candidate and an explicit rollback path;
+2. make a separate, explicit reference-retirement decision.
 
 Reference mode remains the known-good fallback throughout this work.
