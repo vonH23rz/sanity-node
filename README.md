@@ -46,7 +46,7 @@ The current repository baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **245 deterministic standard-library regression tests**
+- **283 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed a full production-configuration rehearsal: host-native public execution reached monitoring parity, while the standard container exposed explicit deployment-boundary requirements for SSH trust, collector Docker access, host filesystems, backup and systemd state, and collector-local endpoints. Phase 3C.9 completed the host-native public-mode production cutover rehearsal with parallel scheduled observation, lifecycle testing, and a full rollback-and-restore rehearsal. Phase 3C.10 is the next step.
+Phase 3B.1 isolated the original reference runtime from the public runtime. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed the production-configuration rehearsal, and Phase 3C.9 completed the host-native public-mode cutover rehearsal with scheduled observation, lifecycle testing, and full rollback restoration. Phase 3C.10 selected Option B and completed the controlled production cutover. The permanent host-native public runtime now serves production, while the original reference and rehearsal runtimes remain installed but disabled. The rollback rehearsal, corrected web-service startup ordering, and sustained scheduled production observation passed. Phase 3C is complete; after completion publication, `main` becomes the `v0.3.0` release candidate.
 
 ---
 
@@ -175,6 +175,7 @@ sanity-node/
 ├── README.md
 ├── LICENSE
 ├── docs/
+│   ├── phase3c-reference-retirement-decision.md
 │   └── assets/
 │       └── sanity-node-dashboard-readme.png
 ├── examples/
@@ -184,6 +185,7 @@ sanity-node/
 │   ├── bootstrap-workspace.py
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
+│   ├── run-public-production.sh
 │   ├── startup-preflight.py
 │   └── validate-config.py
 ├── tests/
@@ -972,9 +974,31 @@ in:
 
     docs/phase3c-production-configuration-rehearsal.md
 
-The remaining Phase 3C decision is:
+Phase 3C.10 selected Option B and completed the controlled production
+cutover.
 
-- reference retirement decision.
+The permanent host-native public runtime now owns the served dashboard.
+The original reference implementation and the public rehearsal runtime
+remain installed but disabled as rollback and diagnostic protection.
+
+The cutover included:
+
+- inactive permanent workspace installation;
+- private production configuration migration;
+- successful validation and startup preflight;
+- manual and scheduled permanent generation;
+- a complete rollback rehearsal and restoration audit;
+- final service-level production activation;
+- local and reverse-proxy output verification;
+- sustained scheduled observation;
+- corrected web-service startup ordering;
+- retained fallback integrity checks.
+
+The generic decision, permanent runtime contract, completed cutover,
+rollback procedure, retained fallback state, and retention policy are
+documented in:
+
+    docs/phase3c-reference-retirement-decision.md
 
 The validated Phase 3C sequence is:
 
@@ -996,10 +1020,16 @@ The validated Phase 3C sequence is:
     Phase 3C.9  Public-mode production cutover rehearsal
                  Complete
 
-    Phase 3C.10 Reference retirement decision
+    Phase 3C.10 Reference retirement and production cutover
+                 Complete
 
-Reference mode remains supported until parity is proven and an explicit
-retirement decision is made.
+Phase 3C is complete. After the completion commit is preserved, merged into
+`main`, and published, the merged branch becomes the `v0.3.0` release
+candidate.
+
+The `v0.3.0` tag remains gated by the complete fresh-install documentation,
+generic deployment guidance, a clean-machine or isolated fresh-install
+qualification, release documentation, and final publication validation.
 
 New Phase 3 work must continue using:
 

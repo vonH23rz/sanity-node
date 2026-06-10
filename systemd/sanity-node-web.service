@@ -1,16 +1,28 @@
 [Unit]
-Description=Sanity Node web server
+Description=Serve the Sanity Node public production dashboard
+Documentation=https://github.com/vonH23rz/sanity-node
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/opt/sanity-node/html/index.html
 
 [Service]
 Type=simple
 User=sanity-node
 Group=sanity-node
 WorkingDirectory=/opt/sanity-node/html
+ExecStartPre=/usr/bin/test -s /opt/sanity-node/html/index.html
 ExecStart=/usr/bin/python3 -m http.server 8088 --directory /opt/sanity-node/html
 Restart=always
 RestartSec=5
+UMask=0022
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadOnlyPaths=/opt/sanity-node
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

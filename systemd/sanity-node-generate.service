@@ -1,8 +1,34 @@
 [Unit]
-Description=Generate Sanity Node dashboard HTML
+Description=Generate Sanity Node public-mode production dashboard
+Documentation=https://github.com/vonH23rz/sanity-node
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/sanity-node/config/config.yaml
+ConditionPathExists=/opt/sanity-node/app/scripts/run-public-production.sh
 
 [Service]
 Type=oneshot
 User=sanity-node
 Group=sanity-node
-ExecStart=/opt/sanity-node/scripts/generate-dashboard.py
+WorkingDirectory=/opt/sanity-node/app
+
+Environment=SANITY_NODE_PRODUCTION_ROOT=/opt/sanity-node
+Environment=SANITY_NODE_APP_ROOT=/opt/sanity-node/app
+Environment=SANITY_NODE_CONFIG=/opt/sanity-node/config/config.yaml
+Environment=SANITY_NODE_OUTPUT=/opt/sanity-node/html/index.html
+Environment=SANITY_NODE_LOG=/opt/sanity-node/logs/generator.log
+Environment=SANITY_NODE_REFERENCE_ROOT=/opt/homelab-dashboard
+Environment=SANITY_NODE_REHEARSAL_ROOT=/opt/sanity-node-public-rehearsal
+EnvironmentFile=-/etc/default/sanity-node
+
+ExecStart=/opt/sanity-node/app/scripts/run-public-production.sh
+UMask=0002
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadOnlyPaths=-/opt/homelab-dashboard -/opt/sanity-node-public-rehearsal
+ReadWritePaths=/opt/sanity-node
+RestrictSUIDSGID=true
+LockPersonality=true
