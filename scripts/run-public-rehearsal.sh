@@ -256,7 +256,7 @@ output_hash="$(
 finish_epoch_ns="$(date +%s%N)"
 
 duration_seconds="$(
-    awk \
+    LC_ALL=C awk \
         -v start="$start_epoch_ns" \
         -v finish="$finish_epoch_ns" \
         'BEGIN {

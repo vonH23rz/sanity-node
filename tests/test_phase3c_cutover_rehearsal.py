@@ -176,6 +176,10 @@ class PublicRehearsalRunnerTests(unittest.TestCase):
             log_text,
         )
         self.assertIn("Runtime seconds:", log_text)
+        self.assertRegex(
+            log_text,
+            r"Runtime seconds: \d+\.\d{3}",
+        )
 
         self.assertEqual(
             list((root / "html").glob("index.html.next.*")),
@@ -294,6 +298,11 @@ class PublicRehearsalUnitContractTests(unittest.TestCase):
         self.assertNotIn("User=controls", text)
         self.assertNotIn("Group=controls", text)
         self.assertNotIn("homelab-dashboard-generate", text)
+
+    def test_runner_forces_c_numeric_locale_for_runtime(self):
+        text = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("LC_ALL=C awk", text)
 
     def test_timer_uses_distinct_five_minute_schedule(self):
         text = TIMER.read_text(encoding="utf-8")
