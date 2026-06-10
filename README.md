@@ -22,45 +22,46 @@ Because in a homelab, everything works perfectly until it does not.
 
 ## Current project status
 
-Sanity Node now contains two deliberately selectable runtime paths:
+Sanity Node `v0.3.0` is the completed configuration-driven public-runtime
+release line.
 
-- the original homelab-tested reference dashboard
-- the completed Phase 2F configuration-driven public runtime
+The repository retains two deliberately selectable runtime paths:
 
-The `dashboard.runtime_mode` setting selects which path executes. `public` runs only configuration-driven collectors and output. `reference` preserves the original personal dashboard behavior. A missing setting defaults to `reference` for backward compatibility.
+- `public` runs only configuration-driven collectors and output
+- `reference` preserves the original homelab-tested dashboard behavior
 
-**Phase 2F is complete.**
+The `dashboard.runtime_mode` setting selects the path. A missing setting still
+defaults to `reference` for backward compatibility, while the qualified public
+installation and production runners explicitly require `public`.
 
-The current repository baseline includes:
+Phase 3C.10 selected Option B and completed the controlled production cutover.
+The permanent host-native public runtime now owns the served dashboard. The
+original reference implementation and the public rehearsal runtime remain
+installed but disabled as rollback and diagnostic protection.
 
-- configuration-driven hosts and host-based cards
-- Systems, Storage, Protection, and Services summary cards
-- HTTP, collector-local Docker, and TrueNAS app checks
-- remote Linux Docker checks over explicit host-specific SSH
-- collector-local and remote Linux storage checks
-- collector-local and remote Linux backup-status checks
-- TrueNAS snapshot-task and replication-task collection
-- snapshot and replication overlays for configured protection relationships
-- Diun and TrueNAS-native image-update collection
-- service update overlays with unhealthy-state precedence
-- unreachable-host handling and collector-error classification
-- configuration validation
-- safe preview rendering under `/tmp`
-- **284 deterministic standard-library regression tests**
+**Phase 3C is complete.**
 
-The repository also includes the public runtime scaffold:
+The `v0.3.0` release baseline includes:
 
-- `Dockerfile`
-- `docker-compose.yml`
-- `.env.example`
-- `requirements.txt`
-- `examples/config.starter.yaml`
-- `scripts/bootstrap-workspace.py`
-- `scripts/docker-entrypoint.sh`
-- `scripts/validate-config.py`
-- `scripts/render-preview.sh`
+- safe first-run workspace bootstrap and credential-free starter configuration
+- fail-closed validation, startup preflight, and scheduled refresh
+- explicit public/reference whole-generator runtime isolation
+- configuration-driven Systems, Storage, Protection, and Services summaries
+- Linux and TrueNAS host system information
+- TrueNAS pool capacity, health, temperature, and SMART monitoring
+- TrueNAS application, snapshot, and replication monitoring
+- local and remote Linux Docker, storage, and backup checks
+- HTTP service checks and image-update overlays
+- unified public Overall Status and collector-error severity
+- atomic host-native production generation and output retention
+- qualified Docker Compose installation and advanced host-native deployment
+- completed production cutover, rollback, and scheduled-observation evidence
+- **322 deterministic standard-library regression tests**
 
-Phase 3B.1 isolated the original reference runtime from the public runtime. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed the production-configuration rehearsal, and Phase 3C.9 completed the host-native public-mode cutover rehearsal with scheduled observation, lifecycle testing, and full rollback restoration. Phase 3C.10 selected Option B and completed the controlled production cutover. The permanent host-native public runtime now serves production, while the original reference and rehearsal runtimes remain installed but disabled. The rollback rehearsal, corrected web-service startup ordering, and sustained scheduled production observation passed. Phase 3C is complete; after completion publication, `main` becomes the `v0.3.0` release candidate.
+Before the annotated tag is published, the final merged commit is the
+`v0.3.0` release candidate. After merged-main validation and remote
+verification pass, the annotated tag identifies that exact validated commit.
+The existing `v0.2.0` tag remains unchanged.
 
 ---
 
@@ -154,17 +155,29 @@ One quick answer:
 
 ## Documentation
 
-The Phase 3C migration boundary is documented in [`docs/phase3c-migration-parity-audit.md`](docs/phase3c-migration-parity-audit.md). It records the reference-to-public capability matrix, severity gaps, migration risks, and validated implementation sequence.
+Choose the deployment path that matches the required collector access:
 
-The project/concept page explains what Sanity Node is, why it exists, what it monitors, and how the dashboard concept evolved:
+- [Docker Compose installation](docs/installation.md) — the qualified public
+  first-run path for checks reachable from inside the container
+- [Advanced host-native deployment](docs/deployment.md) — systemd deployment
+  for collector-local operating-system access and persistent SSH-backed checks
 
-[Project Sanity Node](https://wiki.homelabvonh23rz.me/en/Project_Sanity_Node)
+Release and qualification records:
 
-The installation tutorial explains the public install direction, requirements, collector-node concept, TrueNAS SSH requirement, Docker Compose layout, `config.yaml`, and the start-small approach:
+- [v0.3.0 release notes](docs/v0.3.0-release-notes.md)
+- [Changelog](CHANGELOG.md)
+- [v0.3.0 Docker installation qualification](docs/v0.3.0-installation-qualification.md)
 
-[Installing Sanity Node](https://wiki.homelabvonh23rz.me/en/Install_Sanity_Node)
+Phase 3C engineering evidence:
 
-The repository now contains a deterministic first-run bootstrap, a credential-free starter configuration, fail-closed startup checks, a health-gated Docker Compose flow, and explicit public/reference runtime isolation.
+- [Migration parity audit](docs/phase3c-migration-parity-audit.md)
+- [Production configuration rehearsal](docs/phase3c-production-configuration-rehearsal.md)
+- [Public cutover rehearsal](docs/phase3c-public-cutover-rehearsal.md)
+- [Reference retirement and production cutover decision](docs/phase3c-reference-retirement-decision.md)
+
+The Docker installation is the simplest public path. The host-native guide is
+the advanced path when Sanity Node must inspect collector-local Docker,
+filesystems, systemd state, local endpoints, or persistent SSH trust.
 
 ---
 
@@ -172,33 +185,77 @@ The repository now contains a deterministic first-run bootstrap, a credential-fr
 
 ```text
 sanity-node/
-├── README.md
-├── LICENSE
-├── docs/
+├── docs
+│   ├── assets
+│   │   └── sanity-node-dashboard-readme.png
+│   ├── deployment.md
+│   ├── installation.md
+│   ├── phase3c-migration-parity-audit.md
+│   ├── phase3c-production-configuration-rehearsal.md
+│   ├── phase3c-public-cutover-rehearsal.md
 │   ├── phase3c-reference-retirement-decision.md
-│   └── assets/
-│       └── sanity-node-dashboard-readme.png
-├── examples/
+│   ├── v0.3.0-installation-qualification.md
+│   └── v0.3.0-release-notes.md
+├── examples
 │   ├── config.example.yaml
 │   └── config.starter.yaml
-├── scripts/
+├── scripts
 │   ├── bootstrap-workspace.py
+│   ├── docker-entrypoint.sh
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
 │   ├── run-public-production.sh
+│   ├── run-public-rehearsal.sh
 │   ├── startup-preflight.py
 │   └── validate-config.py
-├── tests/
-│   ├── test_bootstrap_workspace.py
-│   ├── test_config_runtime.py
-│   ├── test_runtime_mode.py
-│   └── test_startup_preflight.py
-├── systemd/
+├── systemd
 │   ├── sanity-node-generate.service
 │   ├── sanity-node-generate.timer
+│   ├── sanity-node-public-rehearsal.service
+│   ├── sanity-node-public-rehearsal.timer
 │   └── sanity-node-web.service
-└── web/
-    └── favicon and web manifest assets
+├── tests
+│   ├── test_bootstrap_workspace.py
+│   ├── test_changelog_docs.py
+│   ├── test_config_runtime.py
+│   ├── test_phase3c_cutover_docs.py
+│   ├── test_phase3c_cutover_rehearsal.py
+│   ├── test_phase3c_reference_retirement.py
+│   ├── test_phase3c_reference_retirement_docs.py
+│   ├── test_phase3c_rehearsal_docs.py
+│   ├── test_runtime_mode.py
+│   ├── test_startup_preflight.py
+│   ├── test_v030_deployment_docs.py
+│   ├── test_v030_installation_docs.py
+│   ├── test_v030_installation_qualification_docs.py
+│   └── test_v030_release_docs.py
+├── web
+│   ├── android-chrome-192x192.png
+│   ├── android-chrome-384x384.png
+│   ├── android-chrome-512x512.png
+│   ├── apple-touch-icon.png
+│   ├── browserconfig.xml
+│   ├── favicon-128x128.png
+│   ├── favicon-16x16.png
+│   ├── favicon-256x256.png
+│   ├── favicon-32x32.png
+│   ├── favicon-48x48.png
+│   ├── favicon-64x64.png
+│   ├── favicon-96x96.png
+│   ├── favicon.ico
+│   ├── maskable-icon-192x192.png
+│   ├── maskable-icon-512x512.png
+│   ├── mstile-150x150.png
+│   └── site.webmanifest
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── CHANGELOG.md
+├── docker-compose.yml
+├── Dockerfile
+├── LICENSE
+├── README.md
+└── requirements.txt
 ```
 
 ---
@@ -865,6 +922,15 @@ Most configuration-driven runtime tests extract only selected pure functions fro
 
 `tests/test_bootstrap_workspace.py` covers safe directory creation, collector-only starter validation, startup-preflight compatibility, current-user `.env` identity values, preservation by default, explicit managed-file replacement, directory collisions, symlink rejection, and protection of unrelated workspace files.
 
+`tests/test_changelog_docs.py` protects release ordering, required changelog
+sections, historical release links, deployment and upgrade notes, validation
+claims, and privacy boundaries.
+
+`tests/test_v030_release_docs.py` protects the README release status,
+installation and deployment links, repository structure, release-note scope,
+test-count claims, upgrade guidance, tag immutability, and privacy boundaries.
+
+
 The current runtime scaffold separates:
 
 ```text
@@ -1027,13 +1093,18 @@ The validated Phase 3C sequence is:
     Phase 3C.10 Reference retirement and production cutover
                  Complete
 
-Phase 3C is complete. After the completion commit is preserved, merged into
-`main`, and published, the merged branch becomes the `v0.3.0` release
-candidate.
+Phase 3C is complete. The completed release-documentation and qualification
+branch is the `v0.3.0` release candidate.
 
-The `v0.3.0` tag remains gated by the complete fresh-install documentation,
-generic deployment guidance, a clean-machine or isolated fresh-install
-qualification, release documentation, and final publication validation.
+Before the annotated tag is published, the candidate must be merged into
+`main` with preserved history and pass complete merged-main validation. The
+fresh-install qualification, installation guidance, deployment guidance,
+changelog, release notes, privacy checks, runtime safeguards, and remote
+publication state must all remain valid.
+
+After those gates pass, the annotated `v0.3.0` tag identifies the exact
+validated merged-main commit. The existing `v0.2.0` tag must not be moved,
+rewritten, or replaced.
 
 New Phase 3 work must continue using:
 
