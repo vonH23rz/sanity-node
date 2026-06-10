@@ -1,0 +1,13 @@
+[Unit]
+Description=Run isolated Sanity Node public-mode rehearsal every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=sanity-node-public-rehearsal.service
+
+[Install]
+WantedBy=timers.target
