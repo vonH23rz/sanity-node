@@ -1476,7 +1476,606 @@ def build_service_summary(services, statuses):
     }
 
 
+def build_public_host_service_cards(
+    hosts,
+    services,
+    statuses,
+    reserved_blank_cards=1,
+):
+    enabled_hosts = sorted(
+        enabled_items(hosts),
+        key=configured_host_sort_key,
+    )
+    services = services or []
+    statuses = statuses or {}
 
+    services_by_host = {}
+
+    for service in services:
+        host_id = str(service.get("host") or "")
+
+        if not host_id:
+            continue
+
+        services_by_host.setdefault(host_id, []).append(
+            service
+        )
+
+    cards_html = []
+
+    for host in enabled_hosts:
+        host_id = str(host.get("id") or "")
+        host_name = configured_host_display_name(host)
+        service_card_title = host_name
+
+        if (
+            str(host.get("type") or "").lower() == "truenas"
+            and service_card_title.lower().endswith(" truenas")
+        ):
+            service_card_title = service_card_title[:-8]
+
+        host_services = services_by_host.get(host_id, [])
+
+        if host_services:
+            summary = build_service_summary(
+                host_services,
+                statuses,
+            )
+            card_css = (
+                f" {h(summary['css'])}"
+                if summary["css"]
+                else ""
+            )
+
+            cards_html.append(
+                f"""    <div class="summary-card host-service-card{card_css}" data-host-card="{h(host_id)}">
+      <div class="title">{h(service_card_title)} Services</div>
+      <div class="value">{h(summary["value"])}</div>
+      <div class="summary-details service-details {h(summary["details_class"])}">
+        {summary["details"]}
+      </div>
+    </div>"""
+            )
+            continue
+
+        cards_html.append(
+            f"""    <div class="summary-card host-service-card" data-host-card="{h(host_id)}">
+      <div class="title">{h(service_card_title)} Services</div>
+      <div class="value">0 Services</div>
+      <div class="summary-details service-details">
+        <span class="service-line empty-service-line"><strong>No services configured</strong></span>
+      </div>
+    </div>"""
+        )
+
+    try:
+        blank_count = max(
+            0,
+            int(reserved_blank_cards),
+        )
+    except (TypeError, ValueError):
+        blank_count = 0
+
+    blank_count = max(
+        blank_count,
+        4 - len(cards_html),
+    )
+
+    for _ in range(blank_count):
+        cards_html.append(
+            '<div class="summary-card host-service-card '
+            'placeholder" data-host-card="reserved" '
+            'aria-hidden="true"></div>'
+        )
+
+    return (
+        '<div class="summary-row host-service-summary-row">\n'
+        + "\n".join(cards_html)
+        + "\n</div>"
+    )
+
+
+
+
+
+def build_public_host_system_information_card(
+    host,
+    statuses,
+):
+    host_key = configured_host_key(host)
+    host_type = str(host.get("type") or "").lower()
+    default_activity = (
+        "apps"
+        if host_type == "truenas"
+        else "containers"
+    )
+    status = (statuses or {}).get(
+        host_key,
+        {
+            **config_system_info_empty_data(),
+            "host_type": host_type,
+            "activity": default_activity,
+            "label": "NOT CHECKED",
+            "css": "info",
+            "raw": "system information unavailable",
+        },
+    )
+    display_name = configured_host_display_name(host)
+    label = status.get("label", "UNKNOWN")
+    css = status.get("css", "info")
+    card_css = (
+        css
+        if css in {"info", "warning", "bad"}
+        else ""
+    )
+    activity_label = (
+        "Apps"
+        if status.get("activity") == "apps"
+        else "Containers"
+    )
+
+    return (
+        f'<div class="system-card {h(card_css)}">'
+        '<div class="system-card-header">'
+        '<div>'
+        '<div class="system-card-kicker">'
+        'System Information'
+        '</div>'
+        f'<h3>{h(display_name)}</h3>'
+        '</div>'
+        f'{badge(label, css)}'
+        '</div>'
+        '<div class="system-info-grid">'
+        f'{info_item("Hostname", status.get("hostname", "-"))}'
+        f'{info_item("OS", config_system_info_display_os(status))}'
+        f'{info_item("Kernel", status.get("kernel", "-"))}'
+        f'{info_item("Uptime", status.get("uptime", "-"))}'
+        '<div class="info-item wide">'
+        '<div class="info-label">CPU Model</div>'
+        f'<div class="info-value">'
+        f'{h(status.get("cpu_model", "-"))}'
+        '</div>'
+        '</div>'
+        f'{info_item("CPU Cores", status.get("cpu_cores", "-"))}'
+        f'{info_item("Memory", status.get("memory_total", "-"))}'
+        f'{info_item("Load", status.get("load", "-"))}'
+        f'{info_item(activity_label, config_system_info_activity_value(status))}'
+        '</div>'
+        '</div>'
+    )
+
+
+
+def config_format_df_kib_blocks(value):
+    number = config_pool_integer(value)
+
+    if number is None:
+        text = str(value or "").strip()
+        return text or "-"
+
+    return config_format_bytes(number * 1024)
+
+def build_public_host_storage_card(
+    host,
+    pool_rows,
+    pool_host_statuses,
+    disk_health_rows,
+    disk_health_host_statuses,
+    local_storage_checks,
+    local_storage_statuses,
+):
+    host_id = str(host.get("id") or "")
+    host_key = configured_host_key(host)
+    host_type = str(host.get("type") or "").lower()
+
+    if host_type != "truenas":
+        checks = [
+            check
+            for check in local_storage_checks or []
+            if str(check.get("host") or "") == host_id
+        ]
+
+        if not checks:
+            body = (
+                '<div class="pool-placeholder">'
+                'Local storage monitoring not configured.'
+                '</div>'
+            )
+        else:
+            rows = ""
+
+            for check in checks:
+                check_id = check["id"]
+                status = (local_storage_statuses or {}).get(
+                    check_id,
+                    {
+                        "label": "UNKNOWN",
+                        "css": "info",
+                    },
+                )
+                used_percent = status.get("used_percent")
+                capacity = (
+                    "-"
+                    if used_percent is None
+                    else f"{used_percent}%"
+                )
+                drive_label = (
+                    check.get("label")
+                    or check.get("mount")
+                    or check_id
+                )
+                mount = check.get("mount", "-")
+                size = config_format_df_kib_blocks(
+                    status.get("size")
+                )
+                used = config_format_df_kib_blocks(
+                    status.get("used")
+                )
+                free = config_format_df_kib_blocks(
+                    status.get("available")
+                )
+
+                rows += f"""
+      <tr class="{h(status.get("css", "info"))}">
+        <td><strong>{h(drive_label)}</strong><br><span class="muted-small mono">{h(mount)}</span></td>
+        <td>{h(size)}</td>
+        <td>{h(capacity)}</td>
+        <td>{h(used)}</td>
+        <td>{h(free)}</td>
+        <td>{badge(status.get("label", "UNKNOWN"), status.get("css", "info"))}</td>
+      </tr>
+"""
+
+            body = f"""
+    <table>
+      <tr>
+        <th>Drive</th>
+        <th>Size</th>
+        <th>Cap</th>
+        <th>Used</th>
+        <th>Free</th>
+        <th>Health</th>
+      </tr>
+      {rows}
+    </table>
+"""
+
+        return (
+            '<div class="pool-card">'
+            '<div class="pool-card-header">'
+            '<div class="pool-card-kicker">'
+            'Local Storage'
+            '</div>'
+            '</div>'
+            f'{body}'
+            '</div>'
+        )
+
+    host_pool_rows = sorted(
+        [
+            row
+            for row in pool_rows or []
+            if str(row.get("host_key") or "") == host_key
+        ],
+        key=lambda row: str(
+            row.get("pool_name") or ""
+        ).lower(),
+    )
+    disk_rows_by_pool = {
+        str(row.get("pool_name") or ""): row
+        for row in disk_health_rows or []
+        if str(row.get("host_key") or "") == host_key
+    }
+
+    if not host_pool_rows:
+        status = (pool_host_statuses or {}).get(
+            host_key,
+            {
+                "label": "NOT CHECKED",
+                "css": "info",
+                "raw": "pool status unavailable",
+            },
+        )
+        body = (
+            '<div class="pool-placeholder">'
+            f'{badge(status.get("label", "UNKNOWN"), status.get("css", "info"))} '
+            f'{h(status.get("raw", "No pools discovered."))}'
+            '</div>'
+        )
+    else:
+        rows = ""
+
+        for row in host_pool_rows:
+            pool_name = str(row.get("pool_name") or "-")
+            disk_row = disk_rows_by_pool.get(
+                pool_name,
+                {},
+            )
+            temperature = disk_row.get("temperature") or {}
+            smart = disk_row.get("smart") or {}
+            used_percent = row.get("used_percent")
+            capacity = (
+                "-"
+                if used_percent is None
+                else f"{used_percent:.0f}%"
+            )
+            health_label = (
+                row.get("status")
+                or row.get("label")
+                or "UNKNOWN"
+            )
+
+            rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td><strong>{h(pool_name)}</strong></td>
+        <td>{h(config_format_bytes(row.get("size_bytes")))}</td>
+        <td>{h(capacity)}</td>
+        <td>{h(temperature.get("raw", "-"))}</td>
+        <td>{badge(smart.get("label", "UNKNOWN"), smart.get("css", "info"))}</td>
+        <td>{badge(health_label, row.get("css", "info"))}</td>
+      </tr>
+"""
+
+        body = f"""
+    <table>
+      <tr>
+        <th>Pool</th>
+        <th>Size</th>
+        <th>Cap</th>
+        <th>Disk Temp</th>
+        <th>SMART</th>
+        <th>Health</th>
+      </tr>
+      {rows}
+    </table>
+"""
+
+    return (
+        '<div class="pool-card">'
+        '<div class="pool-card-header">'
+        '<div class="pool-card-kicker">'
+        'Pool Status'
+        '</div>'
+        '</div>'
+        f'{body}'
+        '</div>'
+    )
+
+
+def build_public_host_operations_card(
+    host,
+    backup_checks,
+    backup_statuses,
+    snapshot_rows,
+    replication_rows,
+):
+    host_id = str(host.get("id") or "")
+    host_type = str(host.get("type") or "").lower()
+
+    if host_type != "truenas":
+        checks = [
+            check
+            for check in backup_checks or []
+            if str(check.get("host") or "") == host_id
+        ]
+
+        if not checks:
+            body = (
+                '<div class="pool-placeholder">'
+                'No backup checks configured.'
+                '</div>'
+            )
+        else:
+            rows = ""
+
+            for check in checks:
+                check_id = check["id"]
+                status = (backup_statuses or {}).get(
+                    check_id,
+                    {
+                        "label": "UNKNOWN",
+                        "css": "info",
+                        "raw": "-",
+                    },
+                )
+
+                rows += f"""
+      <tr class="{h(status.get("css", "info"))}">
+        <td><strong>{h(check.get("name") or check.get("label") or check_id)}</strong></td>
+        <td>{badge(status.get("label", "UNKNOWN"), status.get("css", "info"))}</td>
+        <td>{h(status.get("raw", "-"))}</td>
+      </tr>
+"""
+
+            body = f"""
+    <table>
+      <tr>
+        <th>Check</th>
+        <th>Status</th>
+        <th>Detail</th>
+      </tr>
+      {rows}
+    </table>
+"""
+
+        return (
+            '<div class="replication-card">'
+            '<div class="pool-card-header">'
+            '<div class="pool-card-kicker">'
+            'Backup Status'
+            '</div>'
+            '</div>'
+            f'{body}'
+            '</div>'
+        )
+
+    snapshots = sorted(
+        [
+            row
+            for row in snapshot_rows or []
+            if str(row.get("host_id") or "") == host_id
+        ],
+        key=lambda row: str(
+            row.get("dataset") or ""
+        ).lower(),
+    )
+    replications = sorted(
+        [
+            row
+            for row in replication_rows or []
+            if str(row.get("host_id") or "") == host_id
+        ],
+        key=lambda row: str(
+            row.get("name") or ""
+        ).lower(),
+    )
+
+    if not snapshots and not replications:
+        body = (
+            '<div class="pool-placeholder">'
+            'No snapshot or replication checks configured.'
+            '</div>'
+        )
+    else:
+        rows = ""
+
+        for row in snapshots:
+            task_enabled = row.get("task_enabled")
+
+            if task_enabled is None:
+                task_state = "-"
+                task_css = "info"
+            elif task_enabled:
+                task_state = "ENABLED"
+                task_css = "ok"
+            else:
+                task_state = "DISABLED"
+                task_css = "warning"
+
+            rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>Snapshot</td>
+        <td><strong>{h(row.get("dataset", "-"))}</strong></td>
+        <td>{badge(task_state, task_css)}</td>
+        <td>{h(row.get("latest_time", "-"))}</td>
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+      </tr>
+"""
+
+        for row in replications:
+            execution_state = str(
+                row.get("execution_state") or "-"
+            ).upper()
+
+            if execution_state in {
+                "FINISHED",
+                "SUCCESS",
+            }:
+                execution_css = "ok"
+            elif execution_state in {
+                "FAILED",
+                "ERROR",
+                "ABORTED",
+            }:
+                execution_css = "bad"
+            elif execution_state in {
+                "HOLD",
+                "PAUSED",
+            }:
+                execution_css = "warning"
+            else:
+                execution_css = "info"
+
+            rows += f"""
+      <tr class="{h(row.get("css", "info"))}">
+        <td>Replication</td>
+        <td><strong>{h(row.get("name", "-"))}</strong></td>
+        <td>{badge(execution_state, execution_css)}</td>
+        <td>{h(row.get("execution_time", "-"))}</td>
+        <td>{badge(row.get("label", "UNKNOWN"), row.get("css", "info"))}</td>
+      </tr>
+"""
+
+        body = f"""
+    <table>
+      <tr>
+        <th>Type</th>
+        <th>Item</th>
+        <th>State</th>
+        <th>Last</th>
+        <th>Result</th>
+      </tr>
+      {rows}
+    </table>
+"""
+
+    return (
+        '<div class="replication-card">'
+        '<div class="pool-card-header">'
+        '<div class="pool-card-kicker">'
+        'Snapshot / Replication'
+        '</div>'
+        '</div>'
+        f'{body}'
+        '</div>'
+    )
+
+
+def build_public_host_system_rows(
+    hosts,
+    system_info_statuses,
+    pool_rows,
+    pool_host_statuses,
+    disk_health_rows,
+    disk_health_host_statuses,
+    local_storage_checks,
+    local_storage_statuses,
+    backup_checks,
+    backup_statuses,
+    snapshot_rows,
+    replication_rows,
+):
+    rows = []
+
+    for host in sorted(
+        enabled_items(hosts),
+        key=configured_host_sort_key,
+    ):
+        host_id = str(host.get("id") or "")
+
+        rows.append(
+            f"""    <div class="system-row three-column public-system-row" data-system-row="{h(host_id)}">
+      {build_public_host_system_information_card(
+          host,
+          system_info_statuses,
+      )}
+      {build_public_host_storage_card(
+          host,
+          pool_rows,
+          pool_host_statuses,
+          disk_health_rows,
+          disk_health_host_statuses,
+          local_storage_checks,
+          local_storage_statuses,
+      )}
+      {build_public_host_operations_card(
+          host,
+          backup_checks,
+          backup_statuses,
+          snapshot_rows,
+          replication_rows,
+      )}
+    </div>"""
+        )
+
+    if not rows:
+        return ""
+
+    return (
+        '<div class="systems-list public-systems-list">\n'
+        + "\n".join(rows)
+        + "\n</div>"
+    )
 
 def config_percent(value, default):
     try:
@@ -6159,6 +6758,98 @@ def build_public_overall_status(
     }
 
 
+
+def build_public_issue_card(overall_status):
+    overall_status = overall_status or {}
+    issues = overall_status.get("issues") or {}
+
+    severity_definitions = (
+        (3, "CRITICAL", "bad"),
+        (2, "WARNING", "warning"),
+        (1, "INFO", "info"),
+    )
+
+    grouped = {
+        3: [],
+        2: [],
+        1: [],
+    }
+    seen = set()
+
+    for severity, _label, _css in severity_definitions:
+        values = issues.get(
+            severity,
+            issues.get(str(severity), []),
+        )
+
+        if isinstance(values, str):
+            values = [values]
+
+        for value in values or []:
+            text = str(value or "").strip()
+
+            if not text or text in seen:
+                continue
+
+            seen.add(text)
+            grouped[severity].append(text)
+
+    critical_count = len(grouped[3])
+    warning_count = len(grouped[2])
+    info_count = len(grouped[1])
+
+    if not (
+        critical_count
+        or warning_count
+        or info_count
+    ):
+        return ""
+
+    if critical_count:
+        card_css = "bad"
+    elif warning_count:
+        card_css = "warning"
+    else:
+        card_css = "info"
+
+    rows = ""
+
+    for severity, label, css in severity_definitions:
+        for issue in grouped[severity]:
+            rows += f"""
+      <tr class="{h(css)}">
+        <td>{badge(label, css)}</td>
+        <td>{h(issue)}</td>
+      </tr>
+"""
+
+    summary = (
+        f"{critical_count} Critical · "
+        f"{warning_count} Warning · "
+        f"{info_count} Info"
+    )
+
+    return f"""
+<section class="public-issues-section" data-public-issue-card="true">
+  <div class="public-issues-card {h(card_css)}">
+    <div class="public-issues-header">
+      <div>
+        <div class="public-issues-kicker">Attention Required</div>
+        <h2>Issues / Failures</h2>
+      </div>
+      <div class="public-issues-summary">{h(summary)}</div>
+    </div>
+    <table>
+      <tr>
+        <th>Severity</th>
+        <th>Issue</th>
+      </tr>
+      {rows}
+    </table>
+  </div>
+</section>
+"""
+
 def build_collector_errors_section(
     collection_errors,
     contributes_to_overall=False,
@@ -9175,6 +9866,13 @@ if DASHBOARD_RUNTIME_MODE == "public":
     overall_label = public_overall_status["label"]
     overall_css = public_overall_status["css"]
     overall_note = public_overall_status["note"]
+    public_issue_card_html = build_public_issue_card(
+        public_overall_status
+    )
+
+    # Public Overall Status already classifies and deduplicates
+    # collector failures into the issue card.
+    errors_section = ""
 
     print(
         "Public Overall Status: "
@@ -9182,7 +9880,37 @@ if DASHBOARD_RUNTIME_MODE == "public":
     )
 
     public_summary_preview_html = ""
+    public_host_service_cards_html = (
+        build_public_host_service_cards(
+            CONFIG_HOSTS,
+            public_summary_services,
+            public_summary_statuses,
+            reserved_blank_cards=1,
+        )
+    )
+    public_host_system_rows_html = f"""
+<section class="public-systems-section">
+  <h2>Systems</h2>
+  {build_public_host_system_rows(
+      CONFIG_HOSTS,
+      config_system_info_statuses,
+      config_truenas_pool_rows,
+      config_truenas_pool_statuses,
+      config_truenas_disk_health_rows,
+      config_truenas_disk_health_statuses,
+      config_local_storage_checks,
+      config_local_storage_statuses,
+      config_backup_checks,
+      config_backup_statuses,
+      config_truenas_snapshot_rows,
+      config_truenas_replication_rows,
+  )}
+</section>
+"""
 else:
+    public_issue_card_html = ""
+    public_host_service_cards_html = ""
+    public_host_system_rows_html = ""
     public_summary_preview_html = build_public_host_summary_preview(
         CONFIG_HOSTS,
         public_summary_services,
@@ -9215,14 +9943,42 @@ public_four_card_summary_preview_html = build_public_four_card_summary_preview(
     replication_rows=config_truenas_replication_rows,
 )
 
+if DASHBOARD_RUNTIME_MODE == "public":
+    public_four_card_summary_preview_html = ""
+
 if runtime_detail_promoted:
-    details_section_heading = "Details"
-    systems_layout_container_html = ""
+    runtime_details_section_html = ""
 else:
     details_section_heading = "1. Systems"
     systems_layout_container_html = f"""  <div class="systems-list">
     {systems_layout_html}
   </div>"""
+
+    runtime_details_section_html = f"""
+<section>
+  <h2>{h(details_section_heading)}</h2>
+{systems_layout_container_html}
+  {configured_hosts_preview_html}
+
+  {config_system_info_preview_html}
+
+  {config_truenas_pool_preview_html}
+
+  {config_truenas_disk_health_preview_html}
+
+  {config_truenas_snapshot_preview_html}
+
+  {config_truenas_replication_preview_html}
+
+  {config_image_update_preview_html}
+
+  {config_protection_preview_html}
+
+  {config_local_storage_preview_html}
+
+  {config_backup_preview_html}
+</section>
+"""
 
 page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -9552,6 +10308,120 @@ pre, .mono {{
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
+}}
+
+.host-service-summary-row {{
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}}
+
+.host-service-card {{
+  min-width: 0;
+}}
+
+.host-service-card.placeholder {{
+  background: var(--panel);
+  border-left-color: #d7e0e5;
+  box-shadow: none;
+  min-height: 96px;
+}}
+
+.host-service-card .service-line {{
+  min-width: 0;
+}}
+
+.host-service-card .service-line strong {{
+  min-width: 0;
+  overflow-wrap: anywhere;
+}}
+
+.host-service-card .summary-details span {{
+  white-space: normal;
+}}
+
+.empty-service-line {{
+  color: var(--muted);
+}}
+
+.public-systems-section {{
+  margin-bottom: 14px;
+}}
+
+.public-systems-section > h2 {{
+  margin-bottom: 10px;
+}}
+
+.public-system-row {{
+  min-width: 0;
+}}
+
+.public-issues-section {{
+  margin: 14px 0;
+}}
+
+.public-issues-card {{
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 6px solid #9cc9ff;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  padding: 12px;
+}}
+
+.public-issues-card.warning {{
+  border-left-color: #e2b24b;
+}}
+
+.public-issues-card.bad {{
+  border-left-color: #ff9c9c;
+}}
+
+.public-issues-header {{
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}}
+
+.public-issues-kicker {{
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}}
+
+.public-issues-header h2 {{
+  font-size: 18px;
+  margin: 2px 0 0;
+}}
+
+.public-issues-summary {{
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}}
+
+.public-issues-card table {{
+  box-shadow: none;
+  margin-top: 0;
+}}
+
+.public-issues-card th:first-child,
+.public-issues-card td:first-child {{
+  width: 120px;
+}}
+
+@media (max-width: 900px) {{
+  .public-issues-header {{
+    flex-direction: column;
+  }}
+
+  .public-issues-summary {{
+    text-align: left;
+  }}
 }}
 
 .summary-card {{
@@ -10119,33 +10989,17 @@ pre, .mono {{
 
 {reference_summary_html}
 
+{public_host_service_cards_html}
+
+{public_host_system_rows_html}
+
 {public_four_card_summary_preview_html}
 
 {public_summary_preview_html}
 
-<section>
-  <h2>{h(details_section_heading)}</h2>
-{systems_layout_container_html}
-  {configured_hosts_preview_html}
+{runtime_details_section_html}
 
-  {config_system_info_preview_html}
-
-  {config_truenas_pool_preview_html}
-
-  {config_truenas_disk_health_preview_html}
-
-  {config_truenas_snapshot_preview_html}
-
-  {config_truenas_replication_preview_html}
-
-  {config_image_update_preview_html}
-
-  {config_protection_preview_html}
-
-  {config_local_storage_preview_html}
-
-  {config_backup_preview_html}
-</section>
+{public_issue_card_html}
 
 {errors_section}
 

@@ -35,14 +35,41 @@ if [[ ! -s "${OUTPUT_FILE}" ]]; then
   exit 1
 fi
 
-if ! grep -Fq "Dashboard Summary" "${OUTPUT_FILE}"; then
-  echo "ERROR: Dashboard Summary marker was not found." >&2
+if ! grep -Fq "host-service-summary-row" "${OUTPUT_FILE}"; then
+  echo "ERROR: Host service-card row marker was not found." >&2
   exit 1
 fi
 
-if ! grep -Fq "Active cards:" "${OUTPUT_FILE}"; then
-  echo "ERROR: Active-card marker was not found." >&2
+if ! grep -Fq "data-host-card=" "${OUTPUT_FILE}"; then
+  echo "ERROR: Host service-card marker was not found." >&2
   exit 1
+fi
+
+if ! grep -Fq "data-system-row=" "${OUTPUT_FILE}"; then
+  echo "ERROR: Public system-row marker was not found." >&2
+  exit 1
+fi
+
+if grep -Fq "<h2>Details</h2>" "${OUTPUT_FILE}"; then
+  echo "ERROR: Public Details heading is still present." >&2
+  exit 1
+fi
+
+if grep -Fq "Runtime Detail" "${OUTPUT_FILE}"; then
+  echo "ERROR: Public Runtime Detail content is still present." >&2
+  exit 1
+fi
+
+if grep -Fq "Overall Status: OK" "${OUTPUT_FILE}"; then
+  if grep -Fq 'data-public-issue-card="true"' "${OUTPUT_FILE}"; then
+    echo "ERROR: Healthy public preview unexpectedly contains an issue card." >&2
+    exit 1
+  fi
+else
+  if ! grep -Fq 'data-public-issue-card="true"' "${OUTPUT_FILE}"; then
+    echo "ERROR: Non-healthy public preview is missing its issue card." >&2
+    exit 1
+  fi
 fi
 
 echo

@@ -552,44 +552,36 @@ exit 97
         )
         self.assertEqual(commands, "")
 
-        self.assertIn(
-            "Dashboard Summary",
-            rendered,
-        )
-        self.assertIn(
-            "System Overview",
-            rendered,
-        )
-        self.assertIn(
-            "Active cards: Systems · Storage · Protection · Services",
-            rendered,
-        )
-        self.assertIn(
-            "<h2>Details</h2>",
-            rendered,
-        )
-        self.assertIn(
-            "Runtime Detail",
-            rendered,
-        )
-        self.assertIn(
-            "Configured System Information",
-            rendered,
-        )
-        self.assertIn(
-            "collector-local system information collected",
-            rendered,
-        )
-        self.assertIn(
-            "1 Systems · 1 OK · 0 DOWN",
-            rendered,
-        )
-        self.assertNotIn(
-            '<div class="systems-list">',
-            rendered,
-        )
+        for expected_marker in (
+            "host-service-summary-row",
+            'data-host-card="collector"',
+            "public-systems-section",
+            'data-system-row="collector"',
+            "<h2>Systems</h2>",
+        ):
+            self.assertIn(
+                expected_marker,
+                rendered,
+            )
 
-        for obsolete_label in (
+        for removed_marker in (
+            "<h2>Details</h2>",
+            "Issues / Failures",
+            'data-public-issue-card="true"',
+            "Runtime Detail",
+            "Configured Hosts",
+            "Configured System Information",
+            "Configured TrueNAS Pools",
+            "Configured TrueNAS Disk Health",
+            "Configured TrueNAS Snapshot Tasks",
+            "Configured TrueNAS Replication Tasks",
+            "Configured Image Update Sources",
+            "Configured Protection Relationships",
+            "Configured Local Storage",
+            "Configured Backup Status",
+            "Dashboard Summary",
+            "System Overview",
+            "Active cards:",
             "Public Four-Card Preview",
             "Public Layout Preview",
             "Host-based summary direction",
@@ -598,12 +590,12 @@ exit 97
             "<h2>1. Systems</h2>",
         ):
             self.assertNotIn(
-                obsolete_label,
+                removed_marker,
                 rendered,
             )
 
         self.assertIn(
-            "Overall Status: OK",
+            "Overall Status: NOK",
             rendered,
         )
 

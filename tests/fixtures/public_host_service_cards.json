@@ -1,0 +1,262 @@
+{
+  "hosts": [
+    {
+      "id": "t620",
+      "display_name": "T620 TrueNAS",
+      "type": "truenas",
+      "enabled": true
+    },
+    {
+      "id": "t330",
+      "display_name": "T330 TrueNAS",
+      "type": "truenas",
+      "enabled": true
+    },
+    {
+      "id": "collector",
+      "display_name": "Utility Node",
+      "type": "linux",
+      "enabled": true
+    }
+  ],
+  "services": [
+    {
+      "id": "collector-familienbudget",
+      "host": "collector",
+      "display": "Familienbudget",
+      "type": "app"
+    },
+    {
+      "id": "collector-wikijs-private",
+      "host": "collector",
+      "display": "Wiki.js Private",
+      "type": "app"
+    },
+    {
+      "id": "collector-pihole",
+      "host": "collector",
+      "display": "Pi-hole",
+      "type": "app"
+    },
+    {
+      "id": "collector-nginx-proxy-manager",
+      "host": "collector",
+      "display": "Nginx Proxy Manager",
+      "type": "app"
+    },
+    {
+      "id": "collector-dockge",
+      "host": "collector",
+      "display": "Dockge",
+      "type": "app"
+    },
+    {
+      "id": "collector-cloudflare-tunnel",
+      "host": "collector",
+      "display": "Cloudflare Tunnel",
+      "type": "helper"
+    },
+    {
+      "id": "collector-wikijs-database",
+      "host": "collector",
+      "display": "Wiki.js Database",
+      "type": "helper"
+    },
+    {
+      "id": "collector-diun",
+      "host": "collector",
+      "display": "Diun",
+      "type": "helper"
+    },
+    {
+      "id": "t620-searxng",
+      "host": "t620",
+      "display": "SearXNG",
+      "type": "app"
+    },
+    {
+      "id": "t620-jellyfin",
+      "host": "t620",
+      "display": "Jellyfin",
+      "type": "app"
+    },
+    {
+      "id": "t620-open-webui",
+      "host": "t620",
+      "display": "OpenWebUI",
+      "type": "app"
+    },
+    {
+      "id": "t620-filebrowser",
+      "host": "t620",
+      "display": "File Browser",
+      "type": "app"
+    },
+    {
+      "id": "t620-scrutiny",
+      "host": "t620",
+      "display": "Scrutiny",
+      "type": "app"
+    },
+    {
+      "id": "t620-open-speed-test",
+      "host": "t620",
+      "display": "Open Speed Test",
+      "type": "app"
+    },
+    {
+      "id": "t620-dockge",
+      "host": "t620",
+      "display": "Dockge",
+      "type": "app"
+    },
+    {
+      "id": "t620-tailscale",
+      "host": "t620",
+      "display": "Tailscale",
+      "type": "helper"
+    },
+    {
+      "id": "t620-cloudflared",
+      "host": "t620",
+      "display": "Cloudflare Tunnel",
+      "type": "helper"
+    },
+    {
+      "id": "t620-ollama",
+      "host": "t620",
+      "display": "Ollama",
+      "type": "helper"
+    },
+    {
+      "id": "t620-redis",
+      "host": "t620",
+      "display": "Redis",
+      "type": "helper"
+    },
+    {
+      "id": "t620-portracker",
+      "host": "t620",
+      "display": "Portracker",
+      "type": "app"
+    },
+    {
+      "id": "t620-qbittorrent-vpn",
+      "host": "t620",
+      "display": "qBittorrent VPN",
+      "type": "app"
+    },
+    {
+      "id": "t620-wikijs",
+      "host": "t620",
+      "display": "Wiki.js",
+      "type": "app"
+    },
+    {
+      "id": "t620-diun",
+      "host": "t620",
+      "display": "Diun",
+      "type": "helper"
+    }
+  ],
+  "statuses": {
+    "collector-familienbudget": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-wikijs-private": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-pihole": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-nginx-proxy-manager": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-dockge": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-cloudflare-tunnel": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-wikijs-database": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "collector-diun": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-searxng": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-jellyfin": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-open-webui": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-filebrowser": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-scrutiny": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-open-speed-test": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-dockge": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-tailscale": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-cloudflared": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-ollama": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-redis": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-portracker": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-qbittorrent-vpn": {
+      "label": "UPDATE",
+      "css": "info"
+    },
+    "t620-wikijs": {
+      "label": "UP",
+      "css": "ok"
+    },
+    "t620-diun": {
+      "label": "UP",
+      "css": "ok"
+    }
+  },
+  "expected_host_order": [
+    "Utility Node",
+    "T330 TrueNAS",
+    "T620 TrueNAS"
+  ],
+  "reserved_blank_cards": 1
+}
