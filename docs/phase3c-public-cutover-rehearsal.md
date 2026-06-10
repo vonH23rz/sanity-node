@@ -1,6 +1,6 @@
 # Phase 3C.9 — Public-mode production cutover rehearsal
 
-Status: implementation prepared; activation and observation pending.
+Status: complete.
 
 ## Purpose
 
@@ -150,12 +150,54 @@ The isolated workspace can then be archived or removed.
 The reference runtime requires no recovery action because it remains
 active and unchanged throughout the rehearsal.
 
+## Rehearsal result
+
+Phase 3C.9 completed the host-native public-mode production cutover
+rehearsal while preserving the reference runtime as the served
+production path.
+
+The installed isolated runtime passed configuration validation, startup
+preflight, public-presentation checks, complete configured monitoring
+coverage, ownership and permission checks, and atomic output
+publication.
+
+A locale-stable runtime-duration correction was committed, deployed as a
+new immutable application snapshot, and validated before scheduled
+observation continued.
+
+The scheduled observation captured three consecutive scheduled public
+generations and two scheduled reference generations in the same
+observation window. Every public run retained complete monitoring
+coverage, successful service results, locale-stable duration logging,
+valid output ownership and mode, and atomic publication without leftover
+temporary output.
+
+The lifecycle rehearsal successfully demonstrated:
+
+- timer stop while remaining enabled;
+- timer restart;
+- timer disablement;
+- manual service restart while disabled;
+- timer re-enablement;
+- continued reference-runtime operation throughout.
+
+A full rollback and restore rehearsal removed the rehearsal timer,
+service, private drop-in, and active workspace, verified the
+reference-only state, restored the exact private runtime artifacts and
+unit fingerprints, completed another successful manual public
+generation, and restored scheduled operation.
+
+Both timers finished active, enabled, and waiting with concrete next
+triggers. The reference generator remained unchanged throughout the
+rehearsal.
+
 ## Completion boundary
 
-Phase 3C.9 may determine that public mode is technically ready for a
-controlled production cutover.
+Phase 3C.9 demonstrates that public mode is technically ready for a
+controlled production cutover using the validated host-native deployment
+model and documented rollback procedure.
 
-It does not retire reference mode and does not make the reference
-retirement decision.
+It does not switch the served production dashboard, retire reference
+mode, or make the reference-retirement decision.
 
 That decision remains Phase 3C.10.

@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+README = REPO_ROOT / "README.md"
+AUDIT = REPO_ROOT / "docs" / "phase3c-migration-parity-audit.md"
 DOCUMENT = (
     REPO_ROOT
     / "docs"
@@ -14,12 +16,12 @@ DOCUMENT = (
 
 
 class Phase3C9DocumentationTests(unittest.TestCase):
-    def test_document_records_pending_activation_contract(self):
+    def test_document_records_completed_rehearsal_contract(self):
         text = DOCUMENT.read_text(encoding="utf-8")
+        normalized = re.sub(r"\s+", " ", text)
 
         required = (
-            "Status: implementation prepared; "
-            "activation and observation pending.",
+            "Status: complete.",
             "## Isolation contract",
             "## Fail-closed execution",
             "## Systemd contract",
@@ -28,13 +30,44 @@ class Phase3C9DocumentationTests(unittest.TestCase):
             "## Scheduled observation",
             "## Lifecycle tests",
             "## Rollback procedure",
+            "## Rehearsal result",
+            "three consecutive scheduled public generations",
+            "A full rollback and restore rehearsal",
+            "Both timers finished active, enabled, and waiting",
             "## Completion boundary",
+            "technically ready for a controlled production cutover",
             "Phase 3C.10",
         )
 
         for value in required:
             with self.subTest(value=value):
-                self.assertIn(value, text)
+                self.assertIn(value, normalized)
+
+    def test_roadmap_marks_phase3c9_complete(self):
+        readme = README.read_text(encoding="utf-8")
+        audit = AUDIT.read_text(encoding="utf-8")
+
+        expected = (
+            "Phase 3C.9  Public-mode production cutover rehearsal\n"
+            "                 Complete"
+        )
+
+        self.assertIn(expected, readme)
+        self.assertIn(expected, audit)
+        self.assertIn(
+            "Phase 3C.9 completion — public-mode production "
+            "cutover rehearsal",
+            audit,
+        )
+        self.assertIn(
+            "The remaining Phase 3C decision is:",
+            readme,
+        )
+        self.assertIn(
+            "1. make a separate, explicit reference-retirement "
+            "decision.",
+            audit,
+        )
 
     def test_document_records_distinct_rehearsal_resources(self):
         text = DOCUMENT.read_text(encoding="utf-8")

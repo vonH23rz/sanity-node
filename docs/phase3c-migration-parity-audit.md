@@ -465,6 +465,32 @@ Phase 3C.8 therefore closes production-configuration representation and
 identifies deployment integration as the remaining cutover concern.
 No runtime change was required.
 
+## Phase 3C.9 completion — public-mode production cutover rehearsal
+
+Phase 3C.9 installed the host-native public runtime as an isolated
+parallel candidate while preserving the reference runtime as the served
+production path.
+
+The rehearsal validated:
+
+- fail-closed configuration validation and startup preflight;
+- public-mode presentation and complete configured monitoring coverage;
+- atomic output publication with isolated ownership and permissions;
+- locale-stable runtime-duration logging;
+- three consecutive scheduled public runs beside two scheduled reference
+  runs;
+- timer stop, restart, disablement, manual service restart, and
+  re-enablement;
+- full removal, reference-only operation, exact restoration, and resumed
+  scheduled operation.
+
+The reference generator remained unchanged. The reference timer remained
+the known-good production path throughout the rehearsal.
+
+Phase 3C.9 therefore confirms that the host-native public deployment
+model is technically ready for a controlled production cutover. It does
+not switch the served dashboard or retire reference mode.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -492,6 +518,7 @@ No runtime change was required.
                  Complete
 
     Phase 3C.9  Public-mode production cutover rehearsal
+                 Complete
 
     Phase 3C.10 Reference retirement decision
 
@@ -547,8 +574,6 @@ requirements rather than missing runtime capability.
 
 The remaining Phase 3C path is:
 
-1. rehearse the public-mode production cutover using the validated
-   host-native candidate and an explicit rollback path;
-2. make a separate, explicit reference-retirement decision.
+1. make a separate, explicit reference-retirement decision.
 
 Reference mode remains the known-good fallback throughout this work.

@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed a full production-configuration rehearsal: host-native public execution reached monitoring parity, while the standard container exposed explicit deployment-boundary requirements for SSH trust, collector Docker access, host filesystems, backup and systemd state, and collector-local endpoints. Phase 3C.9 is the next step.
+Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed a full production-configuration rehearsal: host-native public execution reached monitoring parity, while the standard container exposed explicit deployment-boundary requirements for SSH trust, collector Docker access, host filesystems, backup and systemd state, and collector-local endpoints. Phase 3C.9 completed the host-native public-mode production cutover rehearsal with parallel scheduled observation, lifecycle testing, and a full rollback-and-restore rehearsal. Phase 3C.10 is the next step.
 
 ---
 
@@ -972,9 +972,8 @@ in:
 
     docs/phase3c-production-configuration-rehearsal.md
 
-The remaining Phase 3C decisions are:
+The remaining Phase 3C decision is:
 
-- public-mode production cutover rehearsal;
 - reference retirement decision.
 
 The validated Phase 3C sequence is:
@@ -995,6 +994,8 @@ The validated Phase 3C sequence is:
                  Complete
 
     Phase 3C.9  Public-mode production cutover rehearsal
+                 Complete
+
     Phase 3C.10 Reference retirement decision
 
 Reference mode remains supported until parity is proven and an explicit
