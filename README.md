@@ -46,7 +46,7 @@ The current repository baseline includes:
 - unreachable-host handling and collector-error classification
 - configuration validation
 - safe preview rendering under `/tmp`
-- **283 deterministic standard-library regression tests**
+- **284 deterministic standard-library regression tests**
 
 The repository also includes the public runtime scaffold:
 
@@ -770,13 +770,17 @@ and the HTTP health check.
 
 ### Startup preflight
 
-Docker startup now fails closed before the web server is exposed. The container startup sequence is:
+Docker startup fails closed before the web server is exposed. The container startup sequence is:
 
 1. validate `config.yaml`
 2. check runtime paths and required SSH credentials
 3. remove any stale generated `index.html`
 4. require one successful, nonempty dashboard render
 5. start the refresh loop and web server
+
+Every scheduled refresh repeats configuration validation and startup
+preflight before invoking the generator. If validation or preflight fails,
+the generator is not run and the last successful dashboard remains served.
 
 The startup preflight checks:
 

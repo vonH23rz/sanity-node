@@ -101,17 +101,29 @@ for required_file in "$VALIDATOR" "$PREFLIGHT" "$GENERATOR"; do
 done
 
 
-echo "[$(date -Iseconds)] Validating Sanity Node configuration"
-"$VALIDATOR" "$CONFIG_PATH"
-
-echo "[$(date -Iseconds)] Running Sanity Node startup preflight"
-"$PREFLIGHT" \
-  --config "$CONFIG_PATH" \
-  --output "$OUTPUT_PATH" \
-  --log "$LOG_FILE"
-
-
 generate_once() {
+  echo "[$(date -Iseconds)] Validating Sanity Node configuration"
+
+  if ! "$VALIDATOR" "$CONFIG_PATH"; then
+    echo \
+      "[$(date -Iseconds)] Configuration validation failed; generator was not run" \
+      >&2
+    return 1
+  fi
+
+  echo "[$(date -Iseconds)] Running Sanity Node startup preflight"
+
+  if ! "$PREFLIGHT" \
+    --config "$CONFIG_PATH" \
+    --output "$OUTPUT_PATH" \
+    --log "$LOG_FILE"
+  then
+    echo \
+      "[$(date -Iseconds)] Startup preflight failed; generator was not run" \
+      >&2
+    return 1
+  fi
+
   echo "[$(date -Iseconds)] Running Sanity Node generator"
 
   if ! "$GENERATOR" >> "$LOG_FILE" 2>&1; then

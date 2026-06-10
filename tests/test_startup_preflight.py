@@ -555,7 +555,13 @@ class StartupPreflightTests(unittest.TestCase):
         )
 
 
-    def make_fake_entrypoint_runtime(self, generator_exit=0):
+    def make_fake_entrypoint_runtime(
+        self,
+        generator_exit=0,
+        validator_fail_after=None,
+        refresh_seconds=3600,
+        serve_seconds=0,
+    ):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
         app_root = root / "app"
@@ -584,10 +590,26 @@ class StartupPreflightTests(unittest.TestCase):
             path.write_text(content)
             path.chmod(0o755)
 
+        validator_script = (
+            "#!/usr/bin/env sh\n"
+            f"echo validate >> {trace_path}\n"
+        )
+
+        if validator_fail_after is not None:
+            validator_count_path = root / "validator.count"
+            validator_script += (
+                f'count="$(cat {validator_count_path} '
+                '2>/dev/null || echo 0)"\n'
+                'count=$((count + 1))\n'
+                f'printf "%s\\n" "$count" > '
+                f"{validator_count_path}\n"
+                f'if [ "$count" -gt {validator_fail_after} ]; '
+                "then exit 9; fi\n"
+            )
+
         write_executable(
             scripts_dir / "validate-config.py",
-            "#!/usr/bin/env sh\n"
-            f"echo validate >> {trace_path}\n",
+            validator_script,
         )
         write_executable(
             scripts_dir / "startup-preflight.py",
@@ -604,7 +626,8 @@ class StartupPreflightTests(unittest.TestCase):
         write_executable(
             fake_bin / "python3",
             "#!/usr/bin/env sh\n"
-            f"echo serve >> {trace_path}\n",
+            f"echo serve >> {trace_path}\n"
+            f"sleep {serve_seconds}\n",
         )
 
         environment = os.environ.copy()
@@ -616,7 +639,9 @@ class StartupPreflightTests(unittest.TestCase):
                 "SANITY_NODE_OUTPUT": str(output_path),
                 "SANITY_NODE_LOG": str(log_path),
                 "SANITY_NODE_PORT": "8099",
-                "SANITY_NODE_REFRESH_SECONDS": "3600",
+                "SANITY_NODE_REFRESH_SECONDS": str(
+                    refresh_seconds
+                ),
                 "PUID": str(os.getuid()),
                 "PGID": str(os.getgid()),
             }
@@ -663,6 +688,37 @@ class StartupPreflightTests(unittest.TestCase):
         self.assertFalse(output_path.exists())
         self.assertIn(
             "initial dashboard generation failed",
+            result.stderr,
+        )
+
+    def test_entrypoint_revalidates_before_scheduled_refresh(self):
+        runtime = self.make_fake_entrypoint_runtime(
+            validator_fail_after=1,
+            refresh_seconds=1,
+            serve_seconds=3,
+        )
+        temporary, trace_path, output_path, result = runtime
+        self.addCleanup(temporary.cleanup)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        trace = trace_path.read_text().splitlines()
+
+        self.assertEqual(
+            trace[:4],
+            ["validate", "preflight", "generate", "serve"],
+        )
+        self.assertGreaterEqual(trace.count("validate"), 2)
+        self.assertEqual(trace.count("preflight"), 1)
+        self.assertEqual(trace.count("generate"), 1)
+        self.assertEqual(trace.count("serve"), 1)
+        self.assertEqual(output_path.read_text(), "dashboard\n")
+        self.assertIn(
+            "Configuration validation failed; generator was not run",
+            result.stderr,
+        )
+        self.assertIn(
+            "Keeping the last successfully generated dashboard",
             result.stderr,
         )
 
