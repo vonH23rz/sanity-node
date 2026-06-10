@@ -60,7 +60,7 @@ The repository also includes the public runtime scaffold:
 - `scripts/validate-config.py`
 - `scripts/render-preview.sh`
 
-Phase 3B.1 isolates the original reference runtime from the public runtime. Public installations skip the hardcoded personal collectors and output, while the reference path remains available unchanged. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed a full production-configuration rehearsal: host-native public execution reached monitoring parity, while the standard container exposed explicit deployment-boundary requirements for SSH trust, collector Docker access, host filesystems, backup and systemd state, and collector-local endpoints. Phase 3C.9 completed the host-native public-mode production cutover rehearsal with parallel scheduled observation, lifecycle testing, and a full rollback-and-restore rehearsal. Phase 3C.10 is the next step.
+Phase 3B.1 isolated the original reference runtime from the public runtime. Phase 3C.2 through Phase 3C.7 completed the configuration-driven collector, severity, schema, and presentation migration. Phase 3C.8 completed the production-configuration rehearsal, and Phase 3C.9 completed the host-native public-mode cutover rehearsal with scheduled observation, lifecycle testing, and full rollback restoration. Phase 3C.10 has now completed the explicit reference-retirement decision and selected Option B: after a successful controlled cutover, the reference implementation will remain installed but disabled as rollback protection. The production cutover and post-cutover observation remain pending.
 
 ---
 
@@ -175,6 +175,7 @@ sanity-node/
 ├── README.md
 ├── LICENSE
 ├── docs/
+│   ├── phase3c-reference-retirement-decision.md
 │   └── assets/
 │       └── sanity-node-dashboard-readme.png
 ├── examples/
@@ -184,6 +185,7 @@ sanity-node/
 │   ├── bootstrap-workspace.py
 │   ├── generate-dashboard.py
 │   ├── render-preview.sh
+│   ├── run-public-production.sh
 │   ├── startup-preflight.py
 │   └── validate-config.py
 ├── tests/
@@ -972,9 +974,20 @@ in:
 
     docs/phase3c-production-configuration-rehearsal.md
 
-The remaining Phase 3C decision is:
+Phase 3C.10 completed the explicit reference-retirement decision.
 
-- reference retirement decision.
+Option B is selected: promote the host-native public runtime to the served
+dashboard, disable the reference generator and web service after successful
+cutover, and retain the complete reference implementation temporarily as
+rollback protection.
+
+The generic decision, permanent runtime contract, cutover order, rollback
+triggers, and retention policy are documented in:
+
+    docs/phase3c-reference-retirement-decision.md
+
+The remaining Phase 3C execution boundary is the controlled production
+cutover, rollback verification, and post-cutover scheduled observation.
 
 The validated Phase 3C sequence is:
 
@@ -997,9 +1010,11 @@ The validated Phase 3C sequence is:
                  Complete
 
     Phase 3C.10 Reference retirement decision
+                 Decision complete; controlled cutover pending
 
-Reference mode remains supported until parity is proven and an explicit
-retirement decision is made.
+Reference mode remains the served known-good path until the controlled
+cutover succeeds. After cutover, it remains installed but disabled for the
+documented rollback-retention period.
 
 New Phase 3 work must continue using:
 

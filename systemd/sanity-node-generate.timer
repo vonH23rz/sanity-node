@@ -1,10 +1,13 @@
 [Unit]
-Description=Run Sanity Node dashboard generator every 5 minutes
+Description=Run Sanity Node public production generator every 5 minutes
 
 [Timer]
 OnBootSec=1min
 OnUnitActiveSec=5min
+AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=true
+Unit=sanity-node-generate.service
 
 [Install]
 WantedBy=timers.target

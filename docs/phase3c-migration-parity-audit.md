@@ -491,6 +491,34 @@ Phase 3C.9 therefore confirms that the host-native public deployment
 model is technically ready for a controlled production cutover. It does
 not switch the served dashboard or retire reference mode.
 
+## Phase 3C.10 decision — reference retirement
+
+Phase 3C.10 evaluated immediate retirement, temporary disabled retention,
+and continued parallel rehearsal.
+
+Option B is selected:
+
+- promote the permanent host-native public runtime to the served dashboard;
+- disable the reference generator timer and reference web service only
+  after the public output and rollback path are validated;
+- retain the complete reference implementation temporarily as a disabled
+  rollback fallback;
+- leave the reverse-proxy route unchanged;
+- use `/opt/sanity-node` and the permanent `sanity-node-*` unit names;
+- require a separate later decision before permanently deleting the
+  reference implementation.
+
+The reference runtime remains the served production path until the
+controlled cutover succeeds. The selected post-cutover state retains it
+installed but disabled.
+
+The detailed decision, permanent runtime contract, cutover order, rollback
+triggers, retention period, and release boundary are documented in
+`docs/phase3c-reference-retirement-decision.md`.
+
+The remaining Phase 3C execution work is the controlled production cutover,
+rollback verification, and post-cutover scheduled observation.
+
 ## Validated Phase 3C sequence
 
     Phase 3C.1  Reference-to-public migration parity audit
@@ -521,6 +549,7 @@ not switch the served dashboard or retire reference mode.
                  Complete
 
     Phase 3C.10 Reference retirement decision
+                 Decision complete; controlled cutover pending
 
 A separate service-inventory migration slice is unnecessary. Docker,
 TrueNAS application, HTTP/manual service, service-link, classification,
@@ -572,8 +601,16 @@ Host-native public execution reached complete monitoring parity. The
 standard container identified explicit deployment integration
 requirements rather than missing runtime capability.
 
+The retirement decision is complete.
+
 The remaining Phase 3C path is:
 
-1. make a separate, explicit reference-retirement decision.
+1. install and validate the permanent public production workspace;
+2. execute the controlled service-level cutover;
+3. verify the documented rollback path;
+4. observe multiple successful scheduled permanent generations;
+5. close Phase 3C and establish the merged main branch as the `v0.3.0`
+   release candidate.
 
-Reference mode remains the known-good fallback throughout this work.
+Reference mode remains the served known-good path until cutover succeeds
+and then remains installed but disabled for the documented rollback period.

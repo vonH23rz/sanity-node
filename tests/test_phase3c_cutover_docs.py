@@ -59,13 +59,21 @@ class Phase3C9DocumentationTests(unittest.TestCase):
             "cutover rehearsal",
             audit,
         )
-        self.assertIn(
+        self.assertNotIn(
             "The remaining Phase 3C decision is:",
             readme,
         )
-        self.assertIn(
+        self.assertNotIn(
             "1. make a separate, explicit reference-retirement "
             "decision.",
+            audit,
+        )
+        self.assertIn(
+            "Decision complete; controlled cutover pending",
+            readme,
+        )
+        self.assertIn(
+            "## Phase 3C.10 decision — reference retirement",
             audit,
         )
 
