@@ -69,11 +69,13 @@ class Phase3C9DocumentationTests(unittest.TestCase):
             audit,
         )
         self.assertIn(
-            "Decision complete; controlled cutover pending",
+            "Phase 3C.10 Reference retirement and production cutover\n"
+            "                 Complete",
             readme,
         )
         self.assertIn(
-            "## Phase 3C.10 decision — reference retirement",
+            "## Phase 3C.10 completion — reference retirement and "
+            "production cutover",
             audit,
         )
 

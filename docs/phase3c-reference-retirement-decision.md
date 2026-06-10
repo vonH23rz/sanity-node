@@ -1,6 +1,6 @@
 # Phase 3C.10 — Reference retirement decision
 
-Status: decision complete; controlled production cutover pending.
+Status: complete; permanent public runtime in production.
 
 ## Purpose
 
@@ -195,6 +195,47 @@ The intended final service state is:
 - reference web service: inactive and disabled;
 - public rehearsal timer: inactive and disabled.
 
+## Production cutover completion
+
+The controlled production cutover was completed on 2026-06-10.
+
+The permanent host-native public runtime now owns the served dashboard:
+
+- `sanity-node-web.service` is active and enabled;
+- `sanity-node-generate.timer` is active and enabled;
+- `sanity-node-generate.service` completes successful oneshot runs and is
+  normally inactive between runs;
+- TCP port 8088 serves `/opt/sanity-node/html`;
+- the existing reverse proxy serves the same permanent output.
+
+Completion evidence includes:
+
+- installation and validation of the permanent workspace while inactive;
+- migration of private configuration and credentials outside Git;
+- successful configuration validation and startup preflight;
+- successful manual permanent generation;
+- a temporary service-level cutover;
+- a complete rollback to the retained reference runtime;
+- verification of the restored rollback state;
+- the final controlled production cutover;
+- multiple consecutive scheduled permanent generations;
+- matching local and reverse-proxied output;
+- atomic output replacement without stale temporary files;
+- unchanged retained reference and rehearsal workspaces.
+
+After initial activation, commit `bf0aa34` corrected the web-service startup
+contract. The web service no longer orders after or requires
+`sanity-node-generate.service`. It starts independently and continues serving
+the last successful dashboard while generation runs.
+
+A controlled web-service restart confirmed that restarting the web service
+did not start the generator. Subsequent scheduled generations completed
+without restarting the web service.
+
+The original reference implementation and the public rehearsal workspace
+remain installed but disabled. They are retained as rollback and diagnostic
+resources, and Phase 3C.10 does not authorize their permanent deletion.
+
 ## Rollback triggers
 
 Rollback is required when any of the following occurs:
@@ -247,17 +288,30 @@ final archived rollback record.
 
 ## Release boundary
 
-A successful controlled cutover and post-cutover observation will:
+The completed controlled cutover, rollback rehearsal, web-service
+startup-order correction, and sustained scheduled observation close
+Phase 3C.
 
-- close Phase 3C;
-- make the merged main branch the `v0.3.0` release candidate;
-- leave the existing `v0.2.0` tag unchanged;
-- retain the disabled reference implementation for rollback;
-- defer the actual `v0.3.0` tag until final validation and publication
-  cleanup pass.
+The completion publication sequence is:
 
-Phase 3C.10 does not create or move a release tag merely by recording this
-decision.
+1. validate and commit the Phase 3C.10 completion documentation;
+2. preserve the completion commit on the remote feature branch;
+3. merge the feature branch into `main` with `--no-ff`;
+4. publish and verify `origin/main`.
+
+After that merge and verification, `main` is the `v0.3.0` release
+candidate.
+
+The existing `v0.2.0` tag remains unchanged. Creation of the actual
+`v0.3.0` tag remains deferred until:
+
+- the complete fresh-install documentation is ready;
+- the bootstrap and generic systemd deployment journey is qualified;
+- a clean-machine or isolated fresh-install test passes;
+- release documentation and the changelog are complete;
+- final publication safeguards pass.
+
+Phase 3C.10 completion does not create or move a release tag.
 
 ## Privacy and repository boundary
 

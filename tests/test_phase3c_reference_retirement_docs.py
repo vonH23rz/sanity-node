@@ -21,7 +21,7 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
         normalized = re.sub(r"\s+", " ", text)
 
         required = (
-            "Status: decision complete; controlled production cutover pending.",
+            "Status: complete; permanent public runtime in production.",
             "## Retirement options",
             "### Option A — immediate retirement",
             "### Option B — disabled reference fallback",
@@ -29,6 +29,7 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
             "### Option C — continued parallel rehearsal",
             "## Selected production architecture",
             "## Controlled cutover sequence",
+            "## Production cutover completion",
             "## Rollback triggers",
             "## Rollback procedure",
             "## Reference retention period",
@@ -106,7 +107,7 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
             "requires a separate explicit decision",
             "close Phase 3C",
             "the `v0.3.0` release candidate",
-            "leave the existing `v0.2.0` tag unchanged",
+            "The existing `v0.2.0` tag remains unchanged.",
             "does not create or move a release tag",
         )
 
@@ -114,66 +115,95 @@ class Phase3C10DecisionDocumentationTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, normalized)
 
-    def test_document_does_not_claim_cutover_completed(self):
+    def test_document_records_completed_production_cutover(self):
         text = DOCUMENT.read_text(encoding="utf-8")
+        normalized = re.sub(r"\s+", " ", text)
 
-        self.assertNotIn("Status: complete.", text)
-        self.assertNotIn("production cutover complete", text.lower())
-        self.assertIn(
+        required = (
+            "Status: complete; permanent public runtime in production.",
+            "## Production cutover completion",
+            "controlled production cutover was completed",
+            "complete rollback to the retained reference runtime",
+            "multiple consecutive scheduled permanent generations",
+            "commit `bf0aa34` corrected the web-service startup contract",
+            "did not start the generator",
+            "remain installed but disabled",
+        )
+
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, normalized)
+
+        self.assertNotIn(
             "controlled production cutover pending",
             text,
         )
 
-    def test_readme_records_decision_complete_cutover_pending(self):
+    def test_readme_records_phase3c_complete(self):
         text = README.read_text(encoding="utf-8")
         normalized = re.sub(r"\s+", " ", text)
 
         required = (
-            "Phase 3C.10 has now completed the explicit "
-            "reference-retirement decision",
-            "Option B is selected",
+            "Phase 3C.10 selected Option B and completed the controlled "
+            "production cutover",
+            "permanent host-native public runtime now owns the served "
+            "dashboard",
+            "reference implementation and the public rehearsal runtime "
+            "remain installed but disabled",
             "docs/phase3c-reference-retirement-decision.md",
-            "Decision complete; controlled cutover pending",
-            "Reference mode remains the served known-good path until "
-            "the controlled cutover succeeds",
+            "Phase 3C.10 Reference retirement and production cutover "
+            "Complete",
+            "Phase 3C is complete",
+            "the `v0.3.0` release candidate",
+            "fresh-install",
         )
 
         for value in required:
             with self.subTest(value=value):
                 self.assertIn(value, normalized)
 
-        self.assertNotIn(
-            "Phase 3C.10 is the next step.",
-            text,
-        )
-        self.assertNotIn(
-            "The remaining Phase 3C decision is:",
-            text,
+        forbidden = (
+            "controlled production cutover pending",
+            "production cutover and post-cutover observation remain pending",
+            "Reference mode remains the served known-good path until",
         )
 
-    def test_migration_audit_records_selected_boundary(self):
+        for value in forbidden:
+            with self.subTest(value=value):
+                self.assertNotIn(value, normalized)
+
+    def test_migration_audit_records_completed_boundary(self):
         text = AUDIT.read_text(encoding="utf-8")
         normalized = re.sub(r"\s+", " ", text)
 
         required = (
-            "## Phase 3C.10 decision — reference retirement",
-            "Option B is selected",
-            "The retirement decision is complete.",
-            "controlled production cutover",
-            "rollback verification",
-            "post-cutover scheduled observation",
-            "Decision complete; controlled cutover pending",
+            "## Phase 3C.10 completion — reference retirement and "
+            "production cutover",
+            "selected Option B and completed the controlled production "
+            "cutover",
+            "complete rollback rehearsal",
+            "Commit `bf0aa34` corrected the permanent web-service startup "
+            "ordering",
+            "Phase 3C.10 Reference retirement and production cutover "
+            "Complete",
+            "Phase 3C is complete",
             "the `v0.3.0` release candidate",
+            "clean public installation journey",
         )
 
         for value in required:
             with self.subTest(value=value):
                 self.assertIn(value, normalized)
 
-        self.assertNotIn(
-            "make a separate, explicit reference-retirement decision",
-            normalized,
+        forbidden = (
+            "Decision complete; controlled cutover pending",
+            "The remaining Phase 3C execution work",
+            "Reference mode remains the served known-good path until",
         )
+
+        for value in forbidden:
+            with self.subTest(value=value):
+                self.assertNotIn(value, normalized)
 
     def test_document_does_not_publish_private_inventory(self):
         text = DOCUMENT.read_text(encoding="utf-8")

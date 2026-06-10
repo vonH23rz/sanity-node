@@ -491,33 +491,43 @@ Phase 3C.9 therefore confirms that the host-native public deployment
 model is technically ready for a controlled production cutover. It does
 not switch the served dashboard or retire reference mode.
 
-## Phase 3C.10 decision — reference retirement
+## Phase 3C.10 completion — reference retirement and production cutover
 
-Phase 3C.10 evaluated immediate retirement, temporary disabled retention,
-and continued parallel rehearsal.
+Phase 3C.10 selected Option B and completed the controlled production
+cutover.
 
-Option B is selected:
+The completed state is:
 
-- promote the permanent host-native public runtime to the served dashboard;
-- disable the reference generator timer and reference web service only
-  after the public output and rollback path are validated;
-- retain the complete reference implementation temporarily as a disabled
-  rollback fallback;
-- leave the reverse-proxy route unchanged;
-- use `/opt/sanity-node` and the permanent `sanity-node-*` unit names;
-- require a separate later decision before permanently deleting the
-  reference implementation.
+- the permanent host-native public runtime under `/opt/sanity-node` owns the
+  served dashboard;
+- the permanent web service and generation timer are active and enabled;
+- the retained reference runtime is installed but disabled;
+- the public rehearsal runtime is retained but disabled;
+- the existing reverse-proxy route remains unchanged;
+- permanent deletion of the reference implementation still requires a
+  separate later decision.
 
-The reference runtime remains the served production path until the
-controlled cutover succeeds. The selected post-cutover state retains it
-installed but disabled.
+The production activation included an inactive installation, private
+configuration migration, manual generation, a temporary cutover, a complete
+rollback rehearsal, rollback-state verification, final cutover, and
+multiple consecutive scheduled permanent generations.
 
-The detailed decision, permanent runtime contract, cutover order, rollback
-triggers, retention period, and release boundary are documented in
+Commit `bf0aa34` corrected the permanent web-service startup ordering. The
+web service no longer starts or requires the generator, and scheduled
+generation does not restart the web service.
+
+Atomic output publication, local and reverse-proxy output equivalence,
+configured monitoring coverage, and retained fallback integrity were
+confirmed throughout observation.
+
+The detailed decision, permanent runtime contract, completed cutover,
+rollback procedure, retained fallback state, retention period, and release
+boundary are documented in
 `docs/phase3c-reference-retirement-decision.md`.
 
-The remaining Phase 3C execution work is the controlled production cutover,
-rollback verification, and post-cutover scheduled observation.
+Phase 3C is complete. After completion publication and merge verification,
+`main` becomes the `v0.3.0` release candidate. The release tag remains
+deferred until the clean public installation journey is qualified.
 
 ## Validated Phase 3C sequence
 
@@ -548,8 +558,8 @@ rollback verification, and post-cutover scheduled observation.
     Phase 3C.9  Public-mode production cutover rehearsal
                  Complete
 
-    Phase 3C.10 Reference retirement decision
-                 Decision complete; controlled cutover pending
+    Phase 3C.10 Reference retirement and production cutover
+                 Complete
 
 A separate service-inventory migration slice is unnecessary. Docker,
 TrueNAS application, HTTP/manual service, service-link, classification,
@@ -601,16 +611,15 @@ Host-native public execution reached complete monitoring parity. The
 standard container identified explicit deployment integration
 requirements rather than missing runtime capability.
 
-The retirement decision is complete.
+The retirement decision, controlled production cutover, rollback
+rehearsal, and sustained scheduled observation are complete.
 
-The remaining Phase 3C path is:
+The permanent public runtime now owns production. The reference and
+rehearsal runtimes remain installed but disabled, and the reference runtime
+remains available for the documented rollback-retention period.
 
-1. install and validate the permanent public production workspace;
-2. execute the controlled service-level cutover;
-3. verify the documented rollback path;
-4. observe multiple successful scheduled permanent generations;
-5. close Phase 3C and establish the merged main branch as the `v0.3.0`
-   release candidate.
-
-Reference mode remains the served known-good path until cutover succeeds
-and then remains installed but disabled for the documented rollback period.
+Phase 3C is closed. Completion publication and merge verification establish
+the merged `main` branch as the `v0.3.0` release candidate. The actual
+release remains gated by the clean public installation qualification,
+installation and deployment documentation, changelog, and final release
+validation.
