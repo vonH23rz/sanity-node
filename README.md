@@ -14,9 +14,15 @@ Because in a homelab, everything works perfectly until it does not.
 
 ---
 
-## Screenshot
+## Screenshots
 
-![Sanity Node dashboard screenshot](docs/assets/sanity-node-dashboard-readme.png)
+### Normal operation
+
+![Sanity Node dashboard showing normal operation](docs/assets/sanity-node-dashboard-readme.png)
+
+### Degraded state example
+
+![Sanity Node dashboard showing a booting host and several down services](docs/assets/sanity-node-dashboard-degraded-readme.png)
 
 ---
 
