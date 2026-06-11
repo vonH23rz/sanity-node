@@ -110,8 +110,11 @@ class PublicRehearsalRunnerTests(unittest.TestCase):
             <!doctype html>
             <html>
             <body>
-            <h2>Dashboard Summary</h2>
-            <h2>Runtime Detail</h2>
+            <section>Utility Node Services</section>
+            <section>T330 Services</section>
+            <section>T620 Services</section>
+            <section id="public-systems-section"></section>
+            <table><tr><th>Drive</th></tr></table>
             </body>
             </html>
             HTML
@@ -166,8 +169,13 @@ class PublicRehearsalRunnerTests(unittest.TestCase):
         self.assertEqual(output.stat().st_mode & 0o777, 0o664)
 
         html = output.read_text(encoding="utf-8")
-        self.assertIn("Dashboard Summary", html)
-        self.assertIn("Runtime Detail", html)
+        self.assertIn("Utility Node Services", html)
+        self.assertIn("T330 Services", html)
+        self.assertIn("T620 Services", html)
+        self.assertIn("public-systems-section", html)
+        self.assertIn("<th>Drive</th>", html)
+        self.assertNotIn("Runtime Detail", html)
+        self.assertNotIn("<h2>Details</h2>", html)
         self.assertNotIn("Config Preview", html)
 
         log_text = log.read_text(encoding="utf-8")
@@ -245,8 +253,11 @@ class PublicRehearsalRunnerTests(unittest.TestCase):
             set -euo pipefail
 
             cat > "$SANITY_NODE_OUTPUT" <<'HTML'
-            Dashboard Summary
-            Runtime Detail
+            Utility Node Services
+            T330 Services
+            T620 Services
+            public-systems-section
+            <th>Drive</th>
             Config Preview
             HTML
             """,
@@ -256,7 +267,7 @@ class PublicRehearsalRunnerTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "contains obsolete Config Preview wording",
+            "contains obsolete GUI marker: Config Preview",
             result.stdout,
         )
         self.assertFalse(output.exists())

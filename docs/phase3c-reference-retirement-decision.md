@@ -105,7 +105,7 @@ Every permanent production generation:
 6. runs startup preflight;
 7. renders to a process-specific temporary file;
 8. requires nonempty output;
-9. requires Dashboard Summary and Runtime Detail markers;
+9. requires accepted public GUI markers;
 10. rejects obsolete Config Preview wording;
 11. applies output mode `0664`;
 12. atomically replaces the last successful production output;

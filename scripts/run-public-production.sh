@@ -242,26 +242,34 @@ if [[ ! -s "$temporary_output" ]]; then
     fail "generator returned success without a nonempty dashboard"
 fi
 
-if ! grep -Fq \
-    "Dashboard Summary" \
-    "$temporary_output"
-then
-    fail "generated dashboard is missing the Dashboard Summary marker"
-fi
+required_public_markers=(
+    "Utility Node Services"
+    "T330 Services"
+    "T620 Services"
+    "public-systems-section"
+    "<th>Drive</th>"
+)
 
-if ! grep -Fq \
-    "Runtime Detail" \
-    "$temporary_output"
-then
-    fail "generated dashboard is missing the Runtime Detail marker"
-fi
+for marker in "${required_public_markers[@]}"; do
+    if ! grep -Fq "$marker" "$temporary_output"; then
+        fail "generated dashboard is missing accepted public GUI marker: $marker"
+    fi
+done
 
-if grep -Fq \
-    "Config Preview" \
-    "$temporary_output"
-then
-    fail "generated public dashboard contains obsolete Config Preview wording"
-fi
+forbidden_public_markers=(
+    "<h2>Details</h2>"
+    "Runtime Detail"
+    "Configured Hosts"
+    "Configured Local Storage"
+    "<th>Mount</th>"
+    "Config Preview"
+)
+
+for marker in "${forbidden_public_markers[@]}"; do
+    if grep -Fq "$marker" "$temporary_output"; then
+        fail "generated public dashboard contains obsolete GUI marker: $marker"
+    fi
+done
 
 chmod 0664 "$temporary_output"
 mv -f -- "$temporary_output" "$OUTPUT_PATH"
