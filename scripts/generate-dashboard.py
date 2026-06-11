@@ -1517,6 +1517,34 @@ def build_public_host_service_cards(
         host_services = services_by_host.get(host_id, [])
 
         if host_services:
+            if config_host_service_unreachable(
+                host,
+                host_services,
+                statuses,
+            ):
+                service_count = len(host_services)
+                service_word = (
+                    "service"
+                    if service_count == 1
+                    else "services"
+                )
+                details = build_public_summary_detail(
+                    "Configured services",
+                    "UNAVAILABLE",
+                    "bad",
+                )
+
+                cards_html.append(
+                    f"""    <div class="summary-card host-service-card bad" data-host-card="{h(host_id)}">
+      <div class="title">{h(service_card_title)} Services</div>
+      <div class="value">Host unreachable · {h(service_count)} {h(service_word)} unavailable</div>
+      <div class="summary-details service-details">
+        {details}
+      </div>
+    </div>"""
+                )
+                continue
+
             summary = build_service_summary(
                 host_services,
                 statuses,
