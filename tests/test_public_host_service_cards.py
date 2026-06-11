@@ -22,6 +22,10 @@ FUNCTION_NAMES = {
     "configured_host_display_name",
     "configured_host_sort_key",
     "build_service_summary",
+    "build_public_summary_detail",
+    "public_summary_text_class",
+    "config_error_indicates_host_unreachable",
+    "config_host_service_unreachable",
     "build_public_host_service_cards",
 }
 
@@ -152,6 +156,77 @@ class PublicHostServiceCardRenderingTests(unittest.TestCase):
             "service-details two-column",
             rendered,
         )
+
+    def test_t620_unreachable_collapses_mixed_service_inventory(self):
+        fixture = {
+            "hosts": [
+                {
+                    "id": "t620",
+                    "type": "truenas",
+                    "display_name": "T620 TrueNAS",
+                    "enabled": True,
+                }
+            ],
+            "services": [
+                {
+                    "id": "jellyfin",
+                    "host": "t620",
+                    "display": "Jellyfin",
+                    "type": "app",
+                    "check": "truenas_app",
+                },
+                {
+                    "id": "redis",
+                    "host": "t620",
+                    "display": "Redis",
+                    "type": "helper",
+                    "check": "truenas_app",
+                },
+                {
+                    "id": "qbittorrent-vpn",
+                    "host": "t620",
+                    "display": "qBittorrent VPN",
+                    "type": "app",
+                    "check": "http",
+                    "url": "http://192.168.30.10:8080",
+                },
+            ],
+            "statuses": {
+                "jellyfin": {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "Connection timed out",
+                },
+                "redis": {
+                    "label": "UNKNOWN",
+                    "css": "info",
+                    "raw": "Connection timed out",
+                },
+                "qbittorrent-vpn": {
+                    "label": "DOWN",
+                    "css": "bad",
+                    "raw": "HTTP connection timed out",
+                },
+            },
+        }
+
+        rendered = BUILDER(
+            fixture["hosts"],
+            fixture["services"],
+            fixture["statuses"],
+            reserved_blank_cards=0,
+        )
+
+        self.assertIn("T620 Services", rendered)
+        self.assertIn(
+            "Host unreachable · 3 services unavailable",
+            rendered,
+        )
+        self.assertIn("Configured services", rendered)
+        self.assertIn("UNAVAILABLE", rendered)
+        self.assertNotIn("Jellyfin", rendered)
+        self.assertNotIn("Redis", rendered)
+        self.assertNotIn("qBittorrent VPN", rendered)
 
     def test_fourth_card_is_an_intentionally_blank_placeholder(self):
         rendered = self.render()
