@@ -10989,6 +10989,132 @@ pre, .mono {{
   font-weight: 800;
 }}
 
+
+/* Sanity Node shared XS typography baseline.
+   Selected from temporary typography review Variant XS.
+   This keeps the existing layout structure intact while aligning the
+   dashboard font family with the shared vonH23rz/Security Node direction. */
+body,
+header,
+.header-left h1,
+.subtitle,
+.header-meta,
+.overall-status,
+.overall-status strong,
+.summary-card,
+.summary-card .title,
+.summary-card .value,
+.summary-details,
+.service-line,
+.public-summary-preview,
+.public-summary-preview h2,
+.public-summary-note,
+.system-card,
+.system-card h3,
+.system-card-kicker,
+.info-label,
+.info-value,
+.pool-card,
+.pool-card h3,
+.pool-card-kicker,
+.replication-card,
+.configured-hosts-preview,
+.configured-hosts-preview h3,
+.configured-hosts-kicker,
+.configured-hosts-meta,
+.configured-hosts-description,
+.muted-small,
+table,
+th,
+td,
+pre,
+.mono,
+.badge,
+.temp-badge {{
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}}
+
+body {{
+  color: #53585f !important;
+  font-size: 12px !important;
+  line-height: 1.29 !important;
+}}
+
+h1,
+h2,
+h3,
+strong,
+.header-left h1,
+.summary-card .value,
+.overall-status strong,
+.info-value,
+th,
+td {{
+  color: #53585f !important;
+}}
+
+.header-left h1 {{
+  font-size: 22px !important;
+  line-height: 1.12 !important;
+}}
+
+.subtitle,
+.header-meta,
+.overall-status,
+td,
+.info-value,
+.summary-details,
+.service-line,
+.muted-small {{
+  font-size: 12px !important;
+}}
+
+h2,
+.overall-status strong {{
+  font-size: 15.5px !important;
+}}
+
+.public-summary-preview h2,
+.configured-hosts-preview h3,
+.system-card h3,
+.pool-card h3 {{
+  font-size: 16px !important;
+}}
+
+.summary-card .title,
+.info-label,
+.system-card-kicker,
+.pool-card-kicker,
+.public-summary-kicker,
+.configured-hosts-kicker {{
+  font-size: 10px !important;
+}}
+
+.summary-card .value {{
+  font-size: 15.5px !important;
+  line-height: 1.22 !important;
+}}
+
+th,
+.pool-card th,
+.replication-card th {{
+  font-size: 10px !important;
+}}
+
+.pool-card td,
+.replication-card td {{
+  font-size: 10px !important;
+}}
+
+.badge,
+.temp-badge,
+.pool-card .badge,
+.pool-card .temp-badge,
+.replication-card .badge,
+.replication-card .temp-badge {{
+  font-size: 9.5px !important;
+}}
+
 </style>
 </head>
 <body>
