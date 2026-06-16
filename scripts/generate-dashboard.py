@@ -11115,6 +11115,55 @@ th,
   font-size: 9.5px !important;
 }}
 
+
+/* Sanity Node Security Node typography weight alignment.
+   Keep the accepted XS font family, size, color, spacing, and layout.
+   Only soften the older bold-heavy Sanity Node text treatment. */
+.header-meta .label,
+th,
+.summary-card .title,
+.public-summary-kicker,
+.public-issues-kicker,
+.system-card-kicker,
+.info-label,
+.pool-card-kicker,
+.configured-hosts-kicker,
+.pool-card th,
+.replication-card th {{
+  font-weight: 600 !important;
+  text-transform: none !important;
+  letter-spacing: 0.01em !important;
+}}
+
+.info-value,
+.pool-card td,
+.replication-card td,
+.pool-card td:first-child,
+.replication-card td:first-child,
+.host-link,
+.summary-card .value,
+.public-summary-selected,
+.public-summary-note,
+.public-issues-summary,
+.configured-hosts-note,
+.ok-text,
+.info-text,
+.warning-text,
+.bad-text,
+.dashboard-footer strong {{
+  font-weight: 500 !important;
+}}
+
+.badge,
+.temp-badge,
+.pool-card .badge,
+.pool-card .temp-badge,
+.replication-card .badge,
+.replication-card .temp-badge {{
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+}}
+
 </style>
 </head>
 <body>
