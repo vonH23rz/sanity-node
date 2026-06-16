@@ -1,0 +1,174 @@
+/* vonH23rz dashboard typography foundation.
+   Shared typography layer for Sanity Node, Security Node, and future dashboards.
+   This file is intended to be the final typography layer after project-local CSS. */
+
+:root {
+  --vh-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vh-text-color: #53585f;
+  --vh-font-size-base: 12px;
+  --vh-line-height-base: 1.25;
+  --vh-line-height-compact: 1.18;
+  --vh-weight-body: 400;
+  --vh-weight-soft: 300;
+  --vh-letter-spacing-normal: 0;
+  --vh-label-size-xs: 0.60rem;
+  --vh-heading-size-sm: 0.92rem;
+}
+
+body,
+header,
+main,
+section,
+table,
+td,
+.service-line,
+.summary-details,
+.system-card,
+.pool-card,
+.replication-card,
+.public-summary-preview,
+.public-issues-card,
+.configured-hosts-preview {
+  font-family: var(--vh-font-family) !important;
+  color: var(--vh-text-color) !important;
+  font-size: var(--vh-font-size-base) !important;
+  line-height: var(--vh-line-height-base) !important;
+  font-weight: var(--vh-weight-body) !important;
+  letter-spacing: var(--vh-letter-spacing-normal) !important;
+}
+
+strong,
+h1,
+h2,
+h3,
+th,
+.header-meta .label,
+.summary-card .title,
+.summary-card .value,
+.public-summary-kicker,
+.public-summary-preview h2,
+.public-summary-selected,
+.public-summary-note,
+.public-issues-kicker,
+.public-issues-header h2,
+.public-issues-summary,
+.system-card-kicker,
+.system-card h3,
+.info-label,
+.info-value,
+.pool-card-kicker,
+.pool-card h3,
+.pool-card th,
+.pool-card td:first-child,
+.replication-card th,
+.replication-card td:first-child,
+.configured-hosts-preview h3,
+.configured-hosts-kicker,
+.configured-hosts-note,
+.service-line strong,
+.dashboard-footer strong,
+.ok-text,
+.info-text,
+.warning-text,
+.bad-text {
+  font-family: var(--vh-font-family) !important;
+  color: var(--vh-text-color) !important;
+  font-weight: var(--vh-weight-soft) !important;
+  text-transform: none !important;
+  letter-spacing: var(--vh-letter-spacing-normal) !important;
+}
+
+.service-line,
+.summary-details,
+.system-info-grid,
+.info-item,
+.pool-card table,
+.replication-card table,
+.pool-card td,
+.replication-card td,
+.pool-card th,
+.replication-card th {
+  line-height: var(--vh-line-height-compact) !important;
+}
+
+.service-line,
+.info-item {
+  padding-top: 0.20rem !important;
+  padding-bottom: 0.20rem !important;
+}
+
+.pool-card th,
+.replication-card th,
+.pool-card td,
+.replication-card td {
+  padding-top: 0.26rem !important;
+  padding-bottom: 0.26rem !important;
+}
+
+.system-card h3,
+.public-summary-preview h2,
+.public-issues-header h2,
+.configured-hosts-preview h3 {
+  font-size: var(--vh-heading-size-sm) !important;
+  line-height: 1.15 !important;
+}
+
+.system-card-kicker,
+.pool-card-kicker,
+.public-summary-kicker,
+.public-issues-kicker,
+.configured-hosts-kicker,
+.info-label {
+  font-size: var(--vh-label-size-xs) !important;
+  line-height: 1.10 !important;
+}
+
+/* Uniform downstream section typography size.
+   Pool, disk, snapshot, replication, and backup/detail sections must use the
+   same readable base typography size as the rest of the dashboard. */
+.pool-card,
+.replication-card,
+.pool-card table,
+.replication-card table,
+.pool-card thead,
+.replication-card thead,
+.pool-card tbody,
+.replication-card tbody,
+.pool-card tr,
+.replication-card tr,
+.pool-card th,
+.replication-card th,
+.pool-card td,
+.replication-card td,
+.pool-card td:first-child,
+.replication-card td:first-child,
+.summary-details,
+.service-line,
+.info-item,
+.configured-hosts-description,
+.configured-hosts-meta,
+.muted-small {
+  font-size: var(--vh-font-size-base) !important;
+}
+
+.pool-card-kicker,
+.replication-card .pool-card-kicker,
+.system-card-kicker,
+.public-summary-kicker,
+.public-issues-kicker,
+.configured-hosts-kicker,
+.info-label {
+  font-size: var(--vh-font-size-base) !important;
+}
+
+
+.badge,
+.temp-badge,
+.pool-card .badge,
+.pool-card .temp-badge,
+.replication-card .badge,
+.replication-card .temp-badge {
+  font-family: var(--vh-font-family) !important;
+  font-weight: var(--vh-weight-soft) !important;
+  letter-spacing: var(--vh-letter-spacing-normal) !important;
+}

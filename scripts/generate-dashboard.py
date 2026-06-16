@@ -11,6 +11,24 @@ from statistics import mean
 
 OUT = Path(os.environ.get("SANITY_NODE_OUTPUT", "/opt/homelab-dashboard/html/index.html"))
 CONFIG_PATH = Path(os.environ.get("SANITY_NODE_CONFIG", "/app/config/config.yaml"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TYPOGRAPHY_FOUNDATION_PATH = Path(
+    os.environ.get(
+        "SANITY_NODE_TYPOGRAPHY_FOUNDATION",
+        REPO_ROOT / "web" / "vonh23rz-dashboard-typography.css",
+    )
+)
+
+
+def load_static_css(path):
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception as exc:
+        print(f"Failed to read static CSS file {path}: {exc}")
+        return ""
+
+
+DASHBOARD_TYPOGRAPHY_FOUNDATION_CSS = load_static_css(TYPOGRAPHY_FOUNDATION_PATH)
 
 
 def load_config(path):
@@ -11164,6 +11182,8 @@ th,
   letter-spacing: 0.01em !important;
 }}
 
+
+{DASHBOARD_TYPOGRAPHY_FOUNDATION_CSS}
 </style>
 </head>
 <body>
