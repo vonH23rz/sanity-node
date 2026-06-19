@@ -19,6 +19,16 @@ def _weight_alignment_block() -> str:
     return source[start:block_end]
 
 
+def _targeted_heading_weight_alignment_block() -> str:
+    source = _source()
+    marker = "Targeted Security Node-style heading weight alignment."
+    assert marker in source
+
+    start = source.index("/* " + marker)
+    end = source.index("</style>", start)
+    return source[start:end]
+
+
 def test_security_node_typography_weight_alignment_override_exists() -> None:
     block = _weight_alignment_block()
 
@@ -58,6 +68,20 @@ def test_security_node_typography_weight_alignment_is_final_css_override() -> No
     marker_index = source.index("Sanity Node Security Node typography weight alignment.")
     style_end_index = source.index("</style>", marker_index)
 
+    original_softening_block = _weight_alignment_block()
+    targeted_block = _targeted_heading_weight_alignment_block()
+
     assert marker_index < style_end_index
     assert "font-weight: 800 !important;" not in source[marker_index:style_end_index]
-    assert "font-weight: 700 !important;" not in source[marker_index:style_end_index]
+
+    # The original Security Node alignment block must stay a softening layer.
+    assert "font-weight: 700 !important;" not in original_softening_block
+
+    # A later, narrow override is allowed only for the explicit heading/value targets.
+    assert "Matches Known Hosts-style heading emphasis" in targeted_block
+    assert ".header-left h1 {{" in targeted_block
+    assert ".host-service-card .value {{" in targeted_block
+    assert ".system-card h3,\n.public-issues-header h2 {{" in targeted_block
+    assert targeted_block.count("font-weight: 700 !important;") == 3
+    assert ".public-issues-card th" not in targeted_block
+    assert ".public-issues-card td" not in targeted_block

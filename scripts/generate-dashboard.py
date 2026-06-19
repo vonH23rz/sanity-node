@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
+import shlex
 
 OUT = Path(os.environ.get("SANITY_NODE_OUTPUT", "/opt/homelab-dashboard/html/index.html"))
 CONFIG_PATH = Path(os.environ.get("SANITY_NODE_CONFIG", "/app/config/config.yaml"))
@@ -1498,7 +1499,7 @@ def build_public_host_service_cards(
     hosts,
     services,
     statuses,
-    reserved_blank_cards=1,
+    reserved_blank_cards=0,
 ):
     enabled_hosts = sorted(
         enabled_items(hosts),
@@ -1594,25 +1595,7 @@ def build_public_host_service_cards(
     </div>"""
         )
 
-    try:
-        blank_count = max(
-            0,
-            int(reserved_blank_cards),
-        )
-    except (TypeError, ValueError):
-        blank_count = 0
-
-    blank_count = max(
-        blank_count,
-        4 - len(cards_html),
-    )
-
-    for _ in range(blank_count):
-        cards_html.append(
-            '<div class="summary-card host-service-card '
-            'placeholder" data-host-card="reserved" '
-            'aria-hidden="true"></div>'
-        )
+    # Do not render reserved/placeholder cards; empty cards create visual gaps.
 
     return (
         '<div class="summary-row host-service-summary-row">\n'
@@ -9931,7 +9914,7 @@ if DASHBOARD_RUNTIME_MODE == "public":
             CONFIG_HOSTS,
             public_summary_services,
             public_summary_statuses,
-            reserved_blank_cards=1,
+            reserved_blank_cards=0,
         )
     )
     public_host_system_rows_html = f"""
@@ -11184,6 +11167,23 @@ th,
 
 
 {DASHBOARD_TYPOGRAPHY_FOUNDATION_CSS}
+
+
+/* Targeted Security Node-style heading weight alignment.
+   Matches Known Hosts-style heading emphasis without changing size, color, spacing, or layout. */
+.header-left h1 {{
+  font-weight: 700 !important;
+}}
+
+.host-service-card .value {{
+  font-weight: 700 !important;
+}}
+
+.system-card h3,
+.public-issues-header h2 {{
+  font-weight: 700 !important;
+}}
+
 </style>
 </head>
 <body>
