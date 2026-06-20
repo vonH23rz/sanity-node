@@ -7460,6 +7460,51 @@ class ConfiguredTrueNASDiskHealthRuntimeTests(unittest.TestCase):
             self.assertNotIn("/home/controls", command)
             self.assertNotIn("truenas_admin@", command)
 
+    def test_smart_command_uses_stable_disk_identities(self):
+        smart_command = config_truenas_smart_command()
+
+        self.assertIn(
+            "def stable_device_path(path):",
+            smart_command,
+        )
+        self.assertIn(
+            'by_id_dir = "/dev/disk/by-id"',
+            smart_command,
+        )
+        self.assertIn(
+            '("wwn-", 0)',
+            smart_command,
+        )
+        self.assertIn(
+            '("nvme-eui.", 1)',
+            smart_command,
+        )
+        self.assertIn(
+            ".add(stable_device_path(token))",
+            smart_command,
+        )
+        self.assertIn(
+            '"/usr/sbin/smartctl"',
+            smart_command,
+        )
+        self.assertIn(
+            "resolved_path = os.path.realpath(device_path)",
+            smart_command,
+        )
+
+        self.assertNotIn(
+            'f"/dev/{device}"',
+            smart_command,
+        )
+        self.assertNotIn(
+            "/dev/sda",
+            smart_command,
+        )
+        self.assertNotIn(
+            "/dev/sdg",
+            smart_command,
+        )
+
     def test_temperature_payload_parser_normalizes_values(self):
         pools, error = (
             parse_config_truenas_temperature_payload(

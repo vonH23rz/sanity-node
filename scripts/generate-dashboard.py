@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
+import shlex
 
 OUT = Path(os.environ.get("SANITY_NODE_OUTPUT", "/opt/homelab-dashboard/html/index.html"))
 CONFIG_PATH = Path(os.environ.get("SANITY_NODE_CONFIG", "/app/config/config.yaml"))
@@ -1498,7 +1499,7 @@ def build_public_host_service_cards(
     hosts,
     services,
     statuses,
-    reserved_blank_cards=1,
+    reserved_blank_cards=0,
 ):
     enabled_hosts = sorted(
         enabled_items(hosts),
@@ -1594,25 +1595,7 @@ def build_public_host_service_cards(
     </div>"""
         )
 
-    try:
-        blank_count = max(
-            0,
-            int(reserved_blank_cards),
-        )
-    except (TypeError, ValueError):
-        blank_count = 0
-
-    blank_count = max(
-        blank_count,
-        4 - len(cards_html),
-    )
-
-    for _ in range(blank_count):
-        cards_html.append(
-            '<div class="summary-card host-service-card '
-            'placeholder" data-host-card="reserved" '
-            'aria-hidden="true"></div>'
-        )
+    # Do not render reserved/placeholder cards; empty cards create visual gaps.
 
     return (
         '<div class="summary-row host-service-summary-row">\n'
@@ -5602,89 +5585,164 @@ def base_device(path):
     return name
 
 
-def smart_for_device(device):
-    commands = (
-        ["sudo", "-n", "smartctl", "-H", f"/dev/{device}"],
-        ["smartctl", "-H", f"/dev/{device}"],
+def stable_device_path(path):
+    device_path = f"/dev/{base_device(path)}"
+    by_id_dir = "/dev/disk/by-id"
+    ranked = []
+
+    preferred_prefixes = (
+        ("wwn-", 0),
+        ("nvme-eui.", 1),
+        ("ata-", 2),
+        ("scsi-", 3),
+        ("nvme-", 4),
     )
+
+    try:
+        entries = os.listdir(by_id_dir)
+    except OSError:
+        return device_path
+
+    for entry in entries:
+        alias = os.path.join(by_id_dir, entry)
+
+        if not os.path.islink(alias):
+            continue
+
+        if os.path.realpath(alias) != device_path:
+            continue
+
+        rank = 10
+
+        for prefix, prefix_rank in preferred_prefixes:
+            if entry.startswith(prefix):
+                rank = prefix_rank
+                break
+
+        ranked.append(
+            (
+                rank,
+                len(entry),
+                entry,
+                alias,
+            )
+        )
+
+    if not ranked:
+        return device_path
+
+    ranked.sort()
+
+    return ranked[0][3]
+
+
+def smart_for_device(device_path):
+    candidates = [device_path]
+    resolved_path = os.path.realpath(device_path)
+
+    if resolved_path not in candidates:
+        candidates.append(resolved_path)
+
     last_output = ""
 
-    for command in commands:
-        result = run(command)
-        output = (
-            result.stdout + result.stderr
-        ).strip()
-        last_output = output
-        lowered = output.lower()
+    for candidate in candidates:
+        commands = (
+            [
+                "sudo",
+                "-n",
+                "/usr/sbin/smartctl",
+                "-H",
+                candidate,
+            ],
+            [
+                "/usr/sbin/smartctl",
+                "-H",
+                candidate,
+            ],
+        )
 
-        if "critical warning" in lowered:
-            match = re.search(
-                r"critical warning:\s*0x([0-9a-f]+)",
-                lowered,
-            )
+        for command in commands:
+            result = run(command)
+            output = (
+                result.stdout + result.stderr
+            ).strip()
+            last_output = output
+            lowered = output.lower()
 
-            if match:
-                if match.group(1) != "00":
+            if "critical warning" in lowered:
+                match = re.search(
+                    r"critical warning:\s*0x([0-9a-f]+)",
+                    lowered,
+                )
+
+                if match:
+                    if match.group(1) != "00":
+                        return {
+                            "device": device_path,
+                            "state": "CRITICAL",
+                            "note": (
+                                f"{device_path}: NVMe critical "
+                                f"warning 0x{match.group(1)}"
+                            ),
+                        }
+
                     return {
-                        "device": device,
-                        "state": "CRITICAL",
+                        "device": device_path,
+                        "state": "OK",
                         "note": (
-                            f"{device}: NVMe critical warning "
-                            f"0x{match.group(1)}"
+                            f"{device_path}: NVMe critical "
+                            "warning 0x00"
                         ),
                     }
 
+            failed_patterns = (
+                r"overall-health.*result:\s*failed",
+                r"smart health status:\s*failed",
+                r"smart overall-health.*failed",
+            )
+
+            if any(
+                re.search(pattern, lowered)
+                for pattern in failed_patterns
+            ):
                 return {
-                    "device": device,
-                    "state": "OK",
+                    "device": device_path,
+                    "state": "CRITICAL",
                     "note": (
-                        f"{device}: NVMe critical warning 0x00"
+                        f"{device_path}: SMART health failed"
                     ),
                 }
 
-        failed_patterns = (
-            r"overall-health.*result:\s*failed",
-            r"smart health status:\s*failed",
-            r"smart overall-health.*failed",
-        )
+            passed_patterns = (
+                r"overall-health.*result:\s*passed",
+                r"smart health status:\s*ok",
+            )
 
-        if any(
-            re.search(pattern, lowered)
-            for pattern in failed_patterns
-        ):
-            return {
-                "device": device,
-                "state": "CRITICAL",
-                "note": f"{device}: SMART health failed",
-            }
+            if any(
+                re.search(pattern, lowered)
+                for pattern in passed_patterns
+            ):
+                return {
+                    "device": device_path,
+                    "state": "OK",
+                    "note": f"{device_path}: SMART passed",
+                }
 
-        passed_patterns = (
-            r"overall-health.*result:\s*passed",
-            r"smart health status:\s*ok",
-        )
-
-        if any(
-            re.search(pattern, lowered)
-            for pattern in passed_patterns
-        ):
-            return {
-                "device": device,
-                "state": "OK",
-                "note": f"{device}: SMART passed",
-            }
-
-        if "passed" in lowered and "failed" not in lowered:
-            return {
-                "device": device,
-                "state": "OK",
-                "note": f"{device}: SMART passed",
-            }
+            if (
+                "passed" in lowered
+                and "failed" not in lowered
+            ):
+                return {
+                    "device": device_path,
+                    "state": "OK",
+                    "note": f"{device_path}: SMART passed",
+                }
 
     return {
-        "device": device,
+        "device": device_path,
         "state": "UNKNOWN",
         "note": (
-            f"{device}: SMART unavailable"
+            f"{device_path}: SMART unavailable"
             + (f" ({last_output})" if last_output else "")
         ),
     }
@@ -5725,7 +5783,7 @@ for line in zpool.stdout.splitlines():
         pool_devices.setdefault(
             current_pool,
             set(),
-        ).add(base_device(token))
+        ).add(stable_device_path(token))
 
 pools = {}
 
@@ -9931,7 +9989,7 @@ if DASHBOARD_RUNTIME_MODE == "public":
             CONFIG_HOSTS,
             public_summary_services,
             public_summary_statuses,
-            reserved_blank_cards=1,
+            reserved_blank_cards=0,
         )
     )
     public_host_system_rows_html = f"""
@@ -11184,6 +11242,23 @@ th,
 
 
 {DASHBOARD_TYPOGRAPHY_FOUNDATION_CSS}
+
+
+/* Targeted Security Node-style heading weight alignment.
+   Matches Known Hosts-style heading emphasis without changing size, color, spacing, or layout. */
+.header-left h1 {{
+  font-weight: 700 !important;
+}}
+
+.host-service-card .value {{
+  font-weight: 700 !important;
+}}
+
+.system-card h3,
+.public-issues-header h2 {{
+  font-weight: 700 !important;
+}}
+
 </style>
 </head>
 <body>

@@ -94,17 +94,16 @@ class PublicHostServiceCardRenderingTests(unittest.TestCase):
             ),
         )
 
-    def test_renders_exactly_four_cards_in_required_order(self):
+    def test_renders_real_host_cards_in_required_order(self):
         rendered = self.render()
 
         markers = [
             'data-host-card="collector"',
             'data-host-card="t330"',
             'data-host-card="t620"',
-            'data-host-card="reserved"',
         ]
 
-        self.assertEqual(rendered.count("data-host-card="), 4)
+        self.assertEqual(rendered.count("data-host-card="), 3)
 
         positions = [
             rendered.index(marker)
@@ -112,6 +111,7 @@ class PublicHostServiceCardRenderingTests(unittest.TestCase):
         ]
 
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn('data-host-card="reserved"', rendered)
 
     def test_utility_node_card_contains_all_services(self):
         rendered = self.render()
@@ -228,15 +228,11 @@ class PublicHostServiceCardRenderingTests(unittest.TestCase):
         self.assertNotIn("Redis", rendered)
         self.assertNotIn("qBittorrent VPN", rendered)
 
-    def test_fourth_card_is_an_intentionally_blank_placeholder(self):
+    def test_does_not_render_reserved_placeholder_card(self):
         rendered = self.render()
 
-        self.assertIn(
-            '<div class="summary-card host-service-card '
-            'placeholder" data-host-card="reserved" '
-            'aria-hidden="true"></div>',
-            rendered,
-        )
+        self.assertNotIn('data-host-card="reserved"', rendered)
+        self.assertNotIn("host-service-card placeholder", rendered)
 
 
 if __name__ == "__main__":
